@@ -1,0 +1,252 @@
+# Configuration for FinnGen 3 Olink Analysis Pipeline (Refactored Version)
+# This template should be customized for your specific data and environment
+
+# Batch configuration
+# In single-batch mode, use the 'data' section below
+# In multi-batch mode, use the 'batches' section with batch-specific data paths
+batch:
+  # Current batch being processed (set by pipeline runner in multi-batch mode)
+  current_batch_id: null  # e.g., "batch_01", "batch_02"
+  # Default batch identifier for single-batch mode
+  default_batch_id: "batch_01"  # Used when multi_batch_mode: false
+
+# Data paths (used in single-batch mode or as fallback)
+# NOTE: Starting point is pre-filtered NPX matrix with AG samples already removed
+data:
+  npx_matrix_file: "/path/to/npx_matrix_all_2527_samples_fg3_batch_02.parquet"  # REQUIRED: Pre-filtered NPX matrix (AG samples removed)
+  metadata_file: "/path/to/metadata.tsv"  # REQUIRED: Sample metadata file
+  bridging_samples_file: "/path/to/bridging_samples.csv"  # Optional: Bridging sample information
+  bridging_samples_finngenid_map: "/path/to/bridging_finngenid_map.tsv"  # Optional: EA5 to FG3 FINNGENID mapping
+
+# Batch-specific data paths (used in multi-batch mode)
+# Each batch section contains batch-specific input file paths
+# Global thresholds and parameters are defined in the 'parameters' section
+batches:
+  batch_01:
+    batch_id: "batch_01"
+    batch_designation: "fg3_batch_01"  # Suffix used in output filenames
+    data:
+      npx_matrix_file: "/path/to/batch_01_npx_matrix.parquet"
+      metadata_file: "/path/to/batch_01_metadata.tsv"
+      bridging_samples_file: null  # Optional
+      bridging_samples_finngenid_map: null  # Optional
+  batch_02:
+    batch_id: "batch_02"
+    batch_designation: "fg3_batch_02"  # Suffix used in output filenames
+    data:
+      npx_matrix_file: "/path/to/batch_02_npx_matrix.parquet"
+      metadata_file: "/path/to/batch_02_metadata.tsv"
+      bridging_samples_file: "/path/to/bridging_samples.csv"  # Optional
+      bridging_samples_finngenid_map: "/path/to/bridging_finngenid_map.tsv"  # Optional
+
+# Covariate and kinship paths
+covariates:
+  kinship_file: "/path/to/kinship_matrix.kin0"  # Kinship matrix file
+  # Primary covariate file (includes smoking information)
+  covariate_file: "/path/to/covariates.txt.gz"  # Covariate file with genetic PCs, age, sex, BMI, smoking
+  # Fallback file for sex information (used when FINNGENID not found in covariate_file)
+  finngen_r13_minimum_file: "/path/to/finngen_r13_minimum.txt.gz"  # Optional: Fallback for sex information
+
+# Output directories
+# All paths are relative to base_dir or can use environment variable PIPELINE_OUTPUT_DIR
+output:
+  base_dir: "output"  # Base output directory (can be overridden by PIPELINE_OUTPUT_DIR env var)
+  qc_dir: "qc"
+  outliers_dir: "outliers"
+  normalized_dir: "normalized"
+  phenotypes_dir: "phenotypes"
+  pqtl_dir: "pqtl"
+  reports_dir: "reports"
+  logs_dir: "logs"
+
+# Analysis parameters
+parameters:
+  # QC thresholds
+  qc:
+    max_missing_per_sample: 0.10  # Max 10% missing data per sample
+    max_missing_per_protein: 0.10  # Max 10% missing data per protein
+    min_sample_call_rate: 0.90
+    min_protein_call_rate: 0.90
+    remove_control_probes: true  # Remove control probes (Incubation, Extension, Amplification) from biological-only outputs (default: true)
+
+  # Outlier detection
+  outliers:
+    pca_components: 10
+    pca_sd_threshold: 3  # Standard deviations for PCA outlier
+    zscore_threshold: 4  # Z-score threshold for outlier detection
+    sex_outlier_method: "protein_based"  # or "genetic_based"
+    run_nn: true  # Whether to run the MLP neural network
+    run_autoencoder: true  # Whether to run the Autoencoder+Classifier model
+    run_svm: true  # Whether to run the Support Vector Machine model
+    top_n_proteins_nn: 150  # Number of top proteins for NN models
+
+  # pQTL outlier detection (Step 05b)
+  pqtl_outliers:
+    finemap_path: "gs://path/to/finemap/summary/"  # GCS path to pQTL finemap results
+    genotype_path: "gs://path/to/genotype/data"  # GCS path to PLINK genotype data
+    z_threshold: 4  # Legacy threshold (not currently used)
+    per_variant_z_threshold: 3  # Threshold for per-variant outlier detection (|Z| > threshold)
+    sex_chromosome_pQTLs: false  # Set to true to include X-chromosome variants
+    top_n_pQTLs: 200  # Number of top pQTLs to use for Z-score calculation
+    min_maf_for_selection: 0.05  # Minimum MAF threshold for pQTL selection
+    use_consensus_pqtls: true  # Use LASSO-selected consensus pQTLs from Step 05a
+    cache_genotypes: true  # Cache extracted BAM files to avoid re-downloading
+    apply_irn: true  # Apply Inverse Rank Normalization before z-score calculation
+
+    # Robust residual-based outlier detection parameters
+    residual_detection:
+      enabled: true
+      min_variants: 100  # Minimum variants required per sample
+      use_composite_score: true
+      tier1_percentile: 0.92  # High-confidence outliers
+      tier2_percentile: 0.80  # Moderate-confidence
+      tier3_percentile: 0.65  # Low-confidence
+
+  # Normalization
+  normalization:
+    method: "bridge_normalization"  # or "median_normalization"
+    reference_batch: "batch_01"  # Reference batch ID for bridge normalization
+    run_enhanced_bridge: false  # Step 07: Run enhanced bridge normalization
+    enhanced_bridge_input: "raw"  # Input for step 07: "raw" or "step06_median"
+    multi_batch_mode: false  # Set to true when integrating multiple batches
+
+  # Aggregation (only used when multi_batch_mode: true)
+  aggregation:
+    aggregate_output: false  # Set to true to aggregate batches in steps 09-11
+
+  # Age association analysis (Step 08)
+  age_association:
+    use_multicollinearity_aware: true  # Use stepwise regression for correlated proteins
+    protein_correlation_threshold: 0.80  # Correlation threshold for grouping
+    sd_filter_threshold: 3  # SD threshold for filtering extreme effect sizes
+
+  # pQTL analysis
+  pqtl:
+    kinship_threshold: 0.0884  # Standard KING threshold for 3rd degree relatives
+    num_pcs: 10  # Number of PCs to include as covariates
+    maf_threshold: 0.30
+    hwe_threshold: 1e-6
+
+  # Covariate adjustment (Step 08)
+  covariate_adjustment:
+    adjust_for_age: true
+    adjust_for_sex: true
+    adjust_for_bmi: true
+    adjust_for_smoking: true
+    adjust_for_pcs: true
+    n_pcs_to_adjust: 10  # Number of proteomic PCs to adjust for
+
+  # Kinship filtering (Step 10)
+  kinship_filtering:
+    kinship_threshold: 0.0884  # KING kinship threshold for relatedness filtering
+
+# Platform specifications
+platform:
+  name: "Olink Explore HT"
+  num_proteins: 5440
+  num_plates: 30
+  samples_per_plate: 86
+
+# Special cohorts to track
+cohorts:
+  disease_cohorts:
+    - "Kidney"
+    - "Parkinsons"
+    - "Metabolic"
+    - "AMD"
+    - "Rheuma"
+    - "Pulmo"
+    - "Chromosomal_Abnormalities"
+  special_samples:
+    - "Blood_donors"
+    - "Bridging_samples"
+    - "Kids"
+    - "F64"
+    - "MFGE8"
+
+### AUXILIARY CONFIGURATIONS ###
+### PRODUCTION RUN DOES NOT NEED THESE CONFIGURATIONS AND CAN BE IGNORED ###
+
+# pQTL Training configuration (Step 05a)
+# Uses LASSO logistic regression to select most informative pQTLs
+pqtl_training:
+  enabled: false  # Set to true to run pQTL training before production detection
+  output_dir: "pqtl-training"  # Subdirectory in output base_dir
+
+  # Stability Selection Parameters
+  n_features_to_sample: 500  # Number of features to randomly sample per cohort
+  n_top_tier_pool: 1000      # Size of the top-tier pool to sample from
+  selection_threshold: 0.01  # Frequency threshold for consensus (1%)
+
+  # LASSO parameters
+  lasso:
+    alpha: 1.0  # 1.0 = LASSO, 0.0 = Ridge, 0-1 = Elastic Net
+    cv_folds: 10  # Cross-validation folds for lambda selection
+    lambda_selection: "lambda.min"  # "lambda.min" or "lambda.1se"
+
+  # Multi-cohort training for robustness
+  num_training_seeds: 250
+  error_configs:
+    - genotype_mismatch: 20
+      sex_mismatch: 5
+    - genotype_mismatch: 30
+      sex_mismatch: 10
+    - genotype_mismatch: 40
+      sex_mismatch: 15
+    - genotype_mismatch: 50
+      sex_mismatch: 20
+  cohort_size: 1000
+
+  # Threshold optimization
+  threshold_method: "youden_j"  # "youden_j" or "fixed_specificity"
+  mad_k: 3.0  # Multiplier for MAD-based threshold backup
+
+  # Cohorts to exclude from training
+  excluded_cohorts:
+    - "Chromosomal_Abnormalities"
+    - "F64"
+    - "Kids"
+
+# Test case configuration (Step 05c - Provenance Test)
+test_case:
+  enabled: true  # Enable test case mode for governance testing
+  random_seed: 12345  # Random seed for reproducibility
+  output_dir: "test-case"  # Subdirectory in output base_dir
+
+  # Cohort downsampling configuration
+  cohort:
+    min_size: 500
+    max_size: 2000
+    default_size: 1000
+
+  # Error introduction configuration
+  error_samples:
+    category1_within_sex_id_shuffle: 20    # Within-sex FINNGENID swaps
+    category2_sex_label_misannotation: 10  # Sex label only
+    category3_cross_sex_id_shuffle: 5      # Cross-sex FINNGENID swaps
+
+  # Genetic distance stratification
+  genetic_distance:
+    enabled: true
+    use_precomputed_gPCs: true
+    n_pcs: 4
+    distance_metric: "euclidean"
+    percentile_strategy: "mixed"
+    percentile_75_fraction: 0.6
+    percentile_90_fraction: 0.4
+    auto_lower_threshold: true
+    log_warnings: true
+
+  validation:
+    strict_mode: true
+    generate_plots: true
+    verbose_logging: true
+
+  # pQTL selection for governance test
+  pqtl_selection:
+    min_maf: 0.30  # Minimum MAF threshold
+    max_pqtls: null  # Maximum number of pQTLs (null = use all)
+
+
+
+

@@ -1,0 +1,72 @@
+# Active configuration files (contain real paths/credentials)
+config/config.yaml
+config/*.yaml
+!config/config.yaml.template
+
+# Output directories
+output/
+logs/
+data/
+
+# R environment files
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+.DS_Store
+
+# Temporary files
+*.tmp
+*.log
+*.swp
+*~
+test_run_output.log
+run_test_to_normalization.sh
+
+# R plot outputs
+*.pdf
+Rplots.pdf
+
+# Environment files
+.env
+.env.local
+*.key
+*.pem
+
+# Test files (if not needed in production)
+test/
+tests/
+*.test.R
+
+# Build artifacts
+*.tar.gz
+*.zip
+
+# Docker volumes (if any)
+.docker/
+
+# Sensitive documentation and Development notes
+UPDATE_SUMMARY_Jan2025.md
+TEST_RUN_SUMMARY.md
+TEST_VERIFICATION.md
+PROJECT_STATUS_ANALYSIS.md
+QUICK_STATUS.md
+DEBUG_FIX*.md
+DEPLOYMENT*.md
+ROOT_CAUSE_ANALYSIS_AUC_NA.md
+
+# OS files
+Thumbs.db
+.DS_Store

@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  fg3-olink-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fg3-olink-pipeline:latest
+    container_name: fg3-olink-pipeline
+    volumes:
+      # Mount data directory (input files)
+      - ./data:/pipeline/data:ro
+      # Mount output directory (results)
+      - ./output:/pipeline/output
+      # Mount config file
+      - ./config/config.yaml:/pipeline/config/config.yaml:ro
+      # Optional: Mount logs directory
+      - ./logs:/pipeline/logs
+    environment:
+      - PIPELINE_CONFIG=/pipeline/config/config.yaml
+      - PIPELINE_BATCH_ID=${PIPELINE_BATCH_ID:-batch_01}
+      - PIPELINE_OUTPUT_DIR=/pipeline/output
+      # Google Cloud credentials (if using GCS for pQTL data)
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+    working_dir: /pipeline
+    # Override command to run pipeline
+    command: ["Rscript", "/pipeline/scripts/run_pipeline.R", "--config", "/pipeline/config/config.yaml"]
+    # Resource limits (adjust based on your system)
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 16G
+        reservations:
+          cpus: '2'
+          memory: 8G
+
+
+
+

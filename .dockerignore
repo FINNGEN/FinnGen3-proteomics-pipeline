@@ -1,0 +1,57 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+!README.md
+
+# Output directories (will be mounted as volumes)
+output/
+logs/
+data/
+
+# Temporary files
+*.tmp
+*.log
+*.swp
+*~
+.DS_Store
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# R cache
+.Rhistory
+.RData
+.Ruserdata
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+
+# Test files
+test/
+tests/
+*.test.R
+
+# Build artifacts
+*.tar.gz
+*.zip
+
+# Environment files
+.env
+.env.local
+
+# Refactoring scripts (not needed in Docker)
+refactor_scripts.py
+
+
+
+
