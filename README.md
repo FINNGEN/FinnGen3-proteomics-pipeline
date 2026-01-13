@@ -796,23 +796,19 @@ If you use this pipeline, please cite:
 
 Copyright (c) 2026 Reza Jabal, PhD / Broad Institute of MIT & Harvard
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This pipeline and associated documentation files (the "Pipeline") are provided for research and academic use. Permission is hereby granted, free of charge, to any person obtaining a copy of this Pipeline, to use, copy, modify, and distribute the Pipeline for research and academic purposes, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. **Attribution**: The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Pipeline.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+2. **Citation**: If you use this Pipeline in your research, please cite it appropriately (see Citation section above).
+
+3. **Research Use**: This Pipeline is intended for research and academic purposes. Users are responsible for ensuring compliance with all applicable laws, regulations, and institutional policies.
+
+4. **Third-Party Dependencies**: This Pipeline depends on various third-party software packages and libraries, each with their own licenses. Users are responsible for compliance with all applicable licenses for dependencies.
+
+5. **No Warranty**: THE PIPELINE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE PIPELINE OR THE USE OR OTHER DEALINGS IN THE PIPELINE.
+
+6. **Data Responsibility**: Users are solely responsible for the data processed through this Pipeline and must ensure they have appropriate permissions and ethical approvals for data use.
 
 ## Contact
 
