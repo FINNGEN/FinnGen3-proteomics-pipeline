@@ -932,20 +932,22 @@ analyze_protein_outlier_disease_groups <- function(zscore_matrix, outlier_result
 main <- function() {
   # Load data from previous steps
   log_info("Loading data from previous steps")
-  # Use technical-cleaned matrix from step 02
-  prev_step02_num <- "02"
+  # CRITICAL: Use base matrix from step 00 (analysis_ready) for parallel flagging
+  # All outlier detection steps (01, 02, 03) now use the same base matrix for parallel flagging
+  # This matches the original pipeline design where technical and Z-score detection operate
+  # on the same base matrix independently, enabling parallel flagging with union logic in final QC
   prev_step00_num <- "00"
-  npx_matrix_path <- get_output_path(prev_step02_num, "npx_matrix_technical_cleaned", batch_id, "outliers", config = config)
+  npx_matrix_path <- get_output_path(prev_step00_num, "npx_matrix_analysis_ready", batch_id, "qc", config = config)
   metadata_path <- get_output_path(prev_step00_num, "metadata", batch_id, "qc", config = config)
 
   if (!file.exists(npx_matrix_path)) {
-    stop("NPX matrix file not found: ", npx_matrix_path, ". Run Step 02 first.")
+    stop("NPX matrix file not found: ", npx_matrix_path, ". Run Step 00 first.")
   }
   if (!file.exists(metadata_path)) {
     stop("Metadata file not found: ", metadata_path, ". Run Step 00 first.")
   }
 
-  log_info("Using technical-cleaned NPX matrix from Step 02: {npx_matrix_path}")
+  log_info("Using base NPX matrix (step 00) for parallel outlier flagging: {npx_matrix_path}")
   npx_matrix <- readRDS(npx_matrix_path)
   metadata <- readRDS(metadata_path)
   log_info("Loaded NPX matrix: {nrow(npx_matrix)} samples x {ncol(npx_matrix)} proteins")
@@ -1009,7 +1011,6 @@ main <- function() {
     npx_zscore_cleaned_path <- get_output_path(step_num, "npx_matrix_zscore_cleaned", batch_id, "outliers", config = config)
     ensure_output_dir(zscore_outliers_path)
     ensure_output_dir(npx_zscore_cleaned_path)
-    ensure_output_dir(pcnorm_zscore_cleaned_path)
 
     saveRDS(outlier_result, zscore_outliers_path)
     saveRDS(npx_clean, npx_zscore_cleaned_path)
@@ -1023,7 +1024,6 @@ main <- function() {
     npx_iterative_cleaned_path <- get_output_path(step_num, "npx_matrix_iterative_cleaned", batch_id, "outliers", config = config)
     ensure_output_dir(zscore_iterative_path)
     ensure_output_dir(npx_iterative_cleaned_path)
-    ensure_output_dir(pcnorm_iterative_cleaned_path)
 
     saveRDS(iterative_result, zscore_iterative_path)
     saveRDS(npx_iterative_clean, npx_iterative_cleaned_path)

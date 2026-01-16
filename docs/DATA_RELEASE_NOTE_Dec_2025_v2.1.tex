@@ -1,0 +1,752 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{tcolorbox}
+
+% Set margins
+\geometry{margin=1in}
+
+% Footer setup
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot[L]{FG3 Proteomics- Batch 02 Release Note (v.2.1)}
+\fancyfoot[R]{\thepage}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0.4pt}
+
+% Hyperref setup
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,
+    urlcolor=cyan,
+}
+
+% Code highlighting
+\lstset{
+    basicstyle=\ttfamily\footnotesize,
+    breaklines=true,
+    captionpos=b,
+    numbers=left,
+    numberstyle=\tiny,
+    frame=single,
+    backgroundcolor=\color{gray!10}
+}
+
+% Title page
+\title{FinnGen 3 Batch 2 Olink Proteomics Data Release Note}
+\date{}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+\vspace{6cm}
+
+\textbf{Release Date}: January 2026 (v.2.1) \\
+
+\textbf{Platform}: Olink Explore HT (5K) \\
+
+\textbf{Batch}: FG3 Batch 2 \\
+
+\textbf{Total Measurements (raw import)}: 14,144,000 (2,600 samples $\times$ 5,440 proteins) \\
+
+\textbf{Total Measurements (after QC)}: 13,231,288 (2,443 samples $\times$ 5,416 proteins) \\
+
+\textbf{Author}: Reza Jabal, PhD (rjabal@broadinstitute.org) \\
+
+\textbf{Reviewer}: Mitja Kurki, PhD (mkurki@broadinstitute.org)
+
+\newpage
+\tableofcontents
+\newpage
+
+\section{File Descriptions (Brief Summary)}
+
+This section provides a brief overview of the data files. For detailed format specifications, see Section \ref{sec:detailed_formats}.
+
+\subsection{Comprehensive Outliers List}
+
+\textbf{Files}: \texttt{comprehensive\_outliers\_list\_fg3\_batch\_02.tsv} and \texttt{.parquet}
+
+Contains all 84 samples flagged as outliers by any QC method, with detailed QC flags and metrics for each method.
+
+\subsection{QC Annotated Metadata}
+
+\textbf{Files}: \texttt{qc\_annotated\_metadata\_fg3\_batch\_02.tsv} and \texttt{.parquet}
+
+Complete metadata for all 2,477 FinnGen samples annotated with QC flags and metrics. Samples not flagged will have \texttt{QC\_flag = 0}.
+
+\subsection{Clean Proteomics Dataset}
+
+\textbf{Files}: \texttt{npx\_matrix\_all\_qc\_passed\_fg3\_batch\_02.rds}, \texttt{.parquet}, and \texttt{.tsv}
+
+Primary analysis dataset containing 2,443 samples (rows) $\times$ 5,416 proteins (columns) that passed all QC filters. Contains raw NPX values. \textbf{Note}: 24 control probes (8 incubation, 8 extension, 8 amplification) are excluded from released data, leaving 5,416 biological proteins.
+
+\subsection{Proteomics Dataset Without Sample Exclusions Based on QC}
+
+\textbf{Files}: \texttt{npx\_matrix\_all\_2527\_samples\_fg3\_batch\_02.rds}, \texttt{.parquet}, and \texttt{.tsv}
+
+Pre-QC dataset containing 2,527 samples (2,477 FinnGen + 50 bridging samples) before QC outlier removal. Use this if you wish to apply custom QC criteria.
+
+\vspace{0.5cm}
+\noindent\rule{\linewidth}{0.5pt}
+\vspace{0.5cm}
+
+\section{Sample QC Summary}
+
+\subsection{Initial Data Import}
+\textbf{2,600 samples received in this batch:}
+\begin{itemize}
+\item 20 internal controls/blank samples (excluded from analysis)
+\item 2,580 biological samples
+  \begin{itemize}
+    \item 2,477 FinnGen samples (96.0\%)
+    \item 53 non-FinnGen samples (2.1\%, excluded from analysis)
+    \item 50 bridge samples (1.9\%, for cross-batch harmonisation)
+  \end{itemize}
+\end{itemize}
+
+\textbf{Start from 2,580 biological samples:}
+\begin{itemize}
+\item Missing data rate: 0.17\% (24,069 missing values out of 14,035,200 measurements)
+\item All 5,440 proteins retained (no proteins excluded at import)
+\end{itemize}
+
+\subsection{Initial Quality Control}
+\textbf{Threshold}: 10\% missing data per sample/protein\\
+\textbf{Rationale}: The 10\% threshold balances data retention with quality control, allowing for technical variation and occasional measurement failures whilst removing samples/proteins with systematic quality issues. This threshold is more lenient than typical 5\% thresholds to preserve biological samples with minor technical artefacts, aligned with Olink platform recommendations for high-throughput proteomics.\\
+
+\textbf{Results}:
+\begin{itemize}
+\item Removed 6 samples with missingness $> 10\%$:
+  \begin{itemize}
+    \item 5 FINNGEN samples (tracked in comprehensive QC reports)
+    \item 1 non-FinnGen sample (excluded from QC tracking, already removed during data import)
+  \end{itemize}
+\item Proteins failed: 0 (all 5,440 proteins passed QC)
+\item \textbf{Samples passing}: 2,574 (99.8\% pass rate from 2,580 biological samples)
+\end{itemize}
+
+\subsection{Sample Mapping and Analysis-Ready Dataset}
+\begin{itemize}
+\item \textbf{Total biological samples after Initial QC}: 2,574
+\item \textbf{FinnGen samples}: 2,472 (2,477 original - 5 Initial QC failures)
+\item \textbf{Non-FinnGen samples (excluded)}: 52 (53 original - 1 Initial QC failure)
+\item \textbf{Bridge samples}: 50 (all passed Initial QC)
+\item \textbf{Duplicate FINNGENIDs}: 139 (technical replicates)
+\item \textbf{Analysis-ready samples}: 2,527 (2,477 FinnGen + 50 Bridge, after excluding 52 non-FinnGen samples)
+\end{itemize}
+
+\textbf{Pre-QC dataset composition}:
+\begin{itemize}
+\item Total samples in pre-QC dataset: 2,527
+\item Composition: 2,477 FinnGen samples (including 5 Initial QC failures) + 50 bridge samples
+\item This dataset includes the 5 Initial QC FinnGen failures for completeness
+\item Analysis-ready subset: 2,527 samples (all samples in pre-QC dataset are analysis-ready)
+\end{itemize}
+
+\section{QC Threshold Harmonisation Strategy}
+
+All outlier detection methods in this pipeline use harmonised thresholds to ensure consistent stringency across different statistical approaches:
+
+\subsection{Core Threshold Relationship}
+For normally distributed data: \textbf{MAD/SD} $\approx$ \textbf{0.798}
+
+Therefore: \textbf{5 $\times$ MAD} $\approx$ \textbf{3.99 $\times$ SD} $\approx$ \textbf{4 $\times$ SD}
+
+\subsection{Specificity}
+\begin{itemize}
+\item \textbf{4 $\times$ SD threshold}: $\sim$99.994\% specificity under normal distribution
+\item \textbf{5 $\times$ SD threshold}: $\sim$99.9999\% specificity under normal distribution (used for PCA methods)
+\end{itemize}
+
+\subsection{Application Across Methods}
+\begin{itemize}
+\item \textbf{PCA Outlier Detection}: 5 $\times$ SD (matches Batch 1 implementation)
+\item \textbf{Technical Outlier Detection}: 5 $\times$ MAD $\approx$ 4 $\times$ SD (MAD-based for robustness)
+\item \textbf{Z-score Outlier Detection}: $|Z| > 4$ (equivalent to 4 $\times$ SD)
+\item \textbf{pQTL Outlier Detection}: mean + 4 $\times$ SD (SD-based for population metric)
+\end{itemize}
+
+This harmonisation ensures that all methods operate at comparable stringency levels, reducing method-specific biases in outlier detection.
+
+\section{Technical Outlier Detection}
+
+The technical outlier detection component consists of three complementary methods that identify samples with measurement quality issues, technical artefacts, and systematic expression pattern deviations. These methods operate on the same base matrix (2,527 analysis-ready samples), flagging outliers but not removing them until final QC integration.
+
+\subsection{PCA Outlier Detection}
+\textbf{Input samples}: 2,527 (analysis-ready samples after sample mapping)\\
+\textbf{Method}: Principal Component Analysis with sequential filtering
+\begin{itemize}
+\item Constant/zero-variance proteins removed: 0 (for PCA calculation only)
+\item Variance explained (first 10 PCs): 35.31\%
+\end{itemize}
+
+\textbf{Threshold}: 5 $\times$ SD for all PCA-based methods (see Section \ref{sec:threshold_strategy} for rationale)
+
+\textbf{PC Scaling}: Principal components PC1 and PC2 are scaled using:
+\[
+\text{PC}_i^{\text{scaled}} = \frac{\text{PC}_i}{\sigma_{\text{PC}_i} \times \sqrt{n}}
+\]
+where $\sigma_{\text{PC}_i}$ is the standard deviation of $\text{PC}_i$ and $n$ is the number of samples (follows Olink documentation).
+
+\textbf{Sequential filtering results} (internal to PCA method - samples flagged but not removed):
+\begin{itemize}
+\item PC1/PC2 filtering ($\pm 5$ SD): 0 samples flagged
+\item PC3/PC4 filtering ($\pm 5$ SD): 17 samples flagged
+\item Median filtering ($\pm 5$ SD): 0 additional samples flagged
+\item IQR filtering ($\pm 5$ SD): 5 samples flagged
+\end{itemize}
+
+\textbf{Total PCA outliers flagged}: 22 samples (0.87\% of 2,527 analysis-ready samples)
+
+\subsection{Technical Outlier Detection}
+\textbf{Input samples}: 2,527 (analysis-ready samples)
+
+\textbf{Threshold}: 5 $\times$ MAD $\approx$ 4 $\times$ SD (see Section \ref{sec:threshold_strategy} for rationale)
+
+\textbf{Detection methods}:
+
+\begin{enumerate}
+    \item \textbf{Plate-level outliers} (5 $\times$ MAD threshold):
+   \begin{itemize}
+     \item Threshold: 5 $\times$ MAD from median plate mean NPX
+     \item \textbf{Outlier plates}: 0 plates (0 samples affected)
+   \end{itemize}
+
+\item \textbf{Batch-level outliers} (5 $\times$ MAD threshold, by collection month):
+   \begin{itemize}
+     \item Threshold: 5 $\times$ MAD from median batch mean NPX
+     \item \textbf{Outlier batches}: 1 sample affected (also flagged as PCA IQR outlier)
+   \end{itemize}
+
+\item \textbf{Processing time outliers} (5 $\times$ MAD threshold):
+   \begin{itemize}
+     \item Threshold: 5 $\times$ MAD from median processing time (collection to freezing)
+     \item \textbf{Processing time outliers}: 2 samples (0.08\% of 2,527 analysis-ready samples)
+   \end{itemize}
+
+\item \textbf{Sample-level technical outliers} (OR logic - any criterion triggers flagging):
+   \begin{itemize}
+     \item Mean NPX outliers (5 $\times$ MAD, two-sided): 0 samples
+     \item SD outliers (4 $\times$ MAD, one-sided upper): 28 samples (\textbf{Note to analysts}: High variance may indicate technical measurement instability, but can also reflect genuine biological heterogeneity, such as samples from individuals with acute disease states, or dynamic physiological processes; analysts should evaluate these samples in their biological context before exclusion, as the QC flag does not distinguish technical from biological sources of variation)
+     \item Missing rate ($>5\%$): 5 samples (all samples have very low missing rates, consistent with initial QC filtering)
+     \item \textbf{Rationale for 5\% missing rate threshold}: More stringent than initial QC's 10\% threshold, catching samples with borderline missing data (5-10\%) that may indicate quality degradation or calculation discrepancies between matrix-based and long-format calculations.
+   \end{itemize}
+\end{enumerate}
+
+\textbf{Total technical outliers flagged}: 33 samples (1.31\% of 2,527 analysis-ready samples)
+
+\subsection{Z-score Outlier Detection}
+\textbf{Input samples}: 2,527 (analysis-ready samples)\\
+
+\textbf{Method}: Per-protein Z-score calculation with sample-level aggregation\\
+
+\textbf{Thresholds}:
+
+\begin{itemize}
+\item \textbf{Per-protein Z-score}: $|Z| > 4$ (see Section \ref{sec:threshold_strategy} for rationale)
+\item \textbf{Sample threshold}: $>10\%$ proteins flagged ($>542/5,416$ biological proteins)
+\end{itemize}
+
+\textbf{Rationale for 10\% protein threshold}: Requires samples to have extreme values across many proteins ($>542$ out of 5,416 biological proteins), preventing flagging of samples with isolated extreme measurements (which may be biologically valid). Indicates systematic measurement issues, sample degradation, or contamination.
+
+\textbf{Calculation}:
+\begin{enumerate}
+\item Calculate per-protein Z-scores: $Z_{i,j} = \frac{\text{NPX}_{i,j} - \mu_j}{\sigma_j}$ for each sample $i$ and protein $j$
+\item Flag extreme values: Identify measurements with $|Z| > 4$
+\item Sample-level aggregation: Count proteins with extreme Z-scores per sample
+\item Iterative refinement: Flag outliers and recalculate Z-scores (up to 5 iterations)
+\end{enumerate}
+
+\textbf{Results}:
+\begin{itemize}
+\item \textbf{Z-score outliers flagged}: 7 samples (0.28\% of 2,527 analysis-ready samples)
+\item \textbf{Interpretation}: 7 samples had $>544$ proteins with $|Z| > 4$, indicating systematic measurement issues
+\item \textbf{Top outlier proteins}: CHIT1, RNPC3, SYCP3, PNP, FOSB
+\end{itemize}
+
+\section{Provenance Steps}
+
+The provenance component consists of two methods that identify sample mismatches and probable sample swaps by comparing observed protein expression patterns with expected patterns based on genetic information (sex and genotype). These methods use the PCA-cleaned matrix (2,505 samples) as input, ensuring that provenance checks are performed on samples that have already passed technical quality filters.
+
+\subsection{Sex Outlier Detection}
+\textbf{Input samples}: 2,505 (2,527 $-$ 22 PCA outliers removed)\\
+\textbf{Matrix source}: Uses PCA-cleaned matrix from PCA Outlier Detection step (with fallback to analysis-ready matrix if PCA-cleaned not available). This sequential approach ensures that sex prediction models are trained on samples that have already passed technical quality filters, improving model robustness and reducing false positives from technical artefacts.\\
+
+\textbf{Method}: Nested cross-validation elastic-net model for sex prediction
+\begin{itemize}
+\item \textbf{Model performance}: AUC = 0.9999 (near-perfect separation)
+\item \textbf{Training samples}: 2,265 (after excluding missing genetic sex, F64 cohort, chromosomal abnormalities)
+\item \textbf{Samples with genetic sex data}: 2,503/2,505 (99.9\% of samples in PCA-cleaned matrix)
+  \begin{itemize}
+    \item Bridge sample genetic sex recovery: 48/50 bridge samples (96.0\%) successfully recovered genetic sex information
+    \item Only 2 bridge samples missing genetic sex: EA5\_OLI\_68474839 and EA5\_OLI\_68478979
+  \end{itemize}
+\end{itemize}
+
+\textbf{Two-tier QC approach}:
+
+1. \textbf{Strict Mismatches} (predicted\_sex $\neq$ genetic\_sex):
+   \begin{itemize}
+     \item \textbf{Definition}: Samples where the predicted sex label (based on 0.5 probability threshold) differs from the genetic sex label
+     \item \textbf{Logic}: \texttt{predicted\_sex != genetic\_sex}, where \texttt{predicted\_sex = "female" if predicted\_prob $\geq$ 0.5, else "male"}
+     \item \textbf{Purpose}: Identify actual classification errors where the model's binary prediction contradicts genetic sex
+     \item \textbf{Strict mismatches flagged}: 23 samples (0.92\% of 2,505 PCA-cleaned samples)
+   \end{itemize}
+
+2. \textbf{Sex Outliers} (threshold-based deviations, NOT strict mismatches):
+   \begin{itemize}
+     \item \textbf{Definition}: Samples where predicted female probability deviates from expected thresholds (Youden's J = 0.71 or 0.5) but predicted\_sex still matches genetic\_sex
+     \item \textbf{Logic}:
+       \begin{itemize}
+         \item Males: \texttt{predicted\_prob $\geq$ 0.71} (Youden's J) OR \texttt{0.5 $\leq$ predicted\_prob $<$ 0.71} (between 0.5 and Youden's J)
+         \item Females: \texttt{predicted\_prob $<$ 0.71} (Youden's J)
+       \end{itemize}
+     \item \textbf{AND} \texttt{predicted\_sex == genetic\_sex} (NOT a strict mismatch)
+     \item \textbf{Purpose}: Identify borderline cases with unusual predicted probabilities that may indicate biological variation or mild measurement issues, but where the binary classification still matches genetic sex
+     \item \textbf{Sex outliers flagged}: 8 samples (0.32\% of 2,505 PCA-cleaned samples)
+   \end{itemize}
+
+\textbf{Total sex-related flags}: 31 samples (1.24\% of 2,505 PCA-cleaned samples)
+
+\textbf{Note to analysts}: Biological factors beyond sample swaps can produce sex-atypical proteomic profiles. This batch includes samples from individuals undergoing gender-affirming hormone therapy (testosterone or oestrogen), paediatric samples (where sex-specific protein signatures may be less pronounced pre-puberty or during pubertal transition), and individuals with sex chromosome abnormalities. These flags are expected given the batch composition and reflect biological variation rather than technical errors. Analysts should evaluate flagged samples in their clinical and developmental context before exclusion, as the QC flag does not distinguish between technical and biological sources of variation.
+
+\subsection{pQTL-based Outlier Detection}
+\textbf{Input samples}: 2,505 (2,527 $-$ 22 PCA outliers removed)\\
+\textbf{Matrix source}: Uses PCA-cleaned matrix from PCA Outlier Detection step (with fallback to analysis-ready matrix if PCA-cleaned not available). This sequential approach ensures consistency with Sex Outlier Detection step and improves the robustness of genotype-predicted protein level comparisons by removing technical outliers that could confound mismatch identification.\\
+
+\textbf{Method}: Genotype-predicted protein level comparison\\
+
+\textbf{pQTL Selection}:
+\begin{itemize}
+\item \textbf{pQTLs used}: 200 variants (after MAF filtering and consensus selection)
+\item \textbf{Selection criteria}: Top 200 pQTLs with MAF $> 20\%$ based on composite score: $(-\log_{10}(p) \times |\beta| \times \text{maf}) / (\text{heterozygosity} + 0.01)$
+\item \textbf{MAF filter}: Variants with MAF $> 20\%$ before selection
+\end{itemize}
+
+\textbf{Note to analysts}: Outliers could be potential sample swaps or other technical issues causing discordance between observed protein levels and genotype-predicted levels; Analysts should review flagged samples with metadata on disease state, treatment history, and sample type before attributing discordance solely to technical error.
+
+\textbf{Z-score Calculation}:
+For each protein-pQTL pair:
+\begin{enumerate}
+\item Stratify samples by their genotype value (0 = homozygous reference, 1 = heterozygous, 2 = homozygous alternative)
+\item Calculate mean and standard deviation of protein expression values per genotype group
+\item Calculate Z-scores: $Z = \frac{\text{observed} - \text{expected\_mean}}{\text{expected\_SD}}$ for each sample-variant pair;
+
+Where \texttt{expected\_mean} and \texttt{expected\_SD} are calculated from the sample's genetic group
+
+\end{enumerate}
+
+\textbf{Mean Absolute Z-score (MeanAbsZ)}:
+\begin{itemize}
+\item \textbf{Calculation}: $\text{MeanAbsZ} = \text{mean}(|Z|)$ across all pQTL variants for each sample
+\item \textbf{Purpose}: Primary metric for outlier detection
+\item \textbf{Rationale}: Captures average deviation from expected protein levels, robust to individual variant outliers
+\item \textbf{Threshold}: Population mean $+$ 4 $\times$ SD (rounded to 1 decimal place) - see Section \ref{sec:threshold_strategy} for rationale
+\item \textbf{Outlier assignment}: \textbf{EXCLUSIVELY based on this metric}
+\end{itemize}
+
+\textbf{Additional metrics calculated (for visualisation only, not used for outlier assignment)}:
+\begin{itemize}
+\item \textbf{Median Absolute Z-score (MedianAbsZ)}: $\text{MedianAbsZ} = \text{median}(|Z|)$
+  \begin{itemize}
+    \item \textbf{Threshold}: Population median $+$ 4 $\times$ MAD $\times$ 1.4826 (MAD-based, for visualisation only)
+  \end{itemize}
+\item \textbf{Median Absolute Residual (MAR)}: $\text{MAR} = \text{median}(|\text{standardised\_residual}|)$
+  \begin{itemize}
+    \item \textbf{Threshold}: Population median $+$ 4 $\times$ MAD $\times$ 1.4826 (MAD-based, for visualisation only)
+  \end{itemize}
+\end{itemize}
+
+\textbf{Results}:
+\begin{itemize}
+\item \textbf{Outliers flagged (MeanAbsZ-based)}: 14 samples (0.56\% of 2,505 PCA-cleaned samples)
+\item \textbf{Samples with pQTL data}: 2,361 (94.3\% of 2,505 PCA-cleaned samples)
+\end{itemize}
+
+\subsection{Final QC Integration}
+\textbf{Purpose}: Integrate all outlier detection results and generate final clean dataset
+
+\textbf{Outlier aggregation}:
+\begin{itemize}
+\item \textbf{Technical outlier detection} (PCA, Technical, Z-score): Operate on the same base matrix (2,527 analysis-ready samples), flagging outliers but not removing them
+\item \textbf{Provenance steps} (Sex, pQTL): Operate sequentially on the PCA-cleaned matrix (2,505 samples), using samples that have already passed technical quality filters
+\item Final QC integration combines all outlier lists using union logic (samples flagged by any method) and removes them from the base matrix
+\item \textbf{Total samples tracked}: 2,527 (all analysis-ready samples)
+\item \textbf{Unique samples flagged}: 84 samples (3.32\% of 2,527 analysis-ready samples)
+\item \textbf{Samples flagged by multiple methods}: 16 samples (19.0\% of all flagged samples)
+  \begin{itemize}
+    \item 2 methods: 9 samples (10.7\% of all flagged samples)
+    \item 3 methods: 7 samples (8.3\% of all flagged samples)
+  \end{itemize}
+\end{itemize}
+
+\textbf{Breakdown by QC method} (all percentages relative to 2,527 analysis-ready samples):
+\begin{itemize}
+\item Initial QC: 0 samples (0.00\% of 2,527) - Note: Initial QC failures not tracked in refactored pipeline (pre-filtered input)
+\item PCA: 22 samples (0.87\% of 2,527)
+\item Sex Mismatch (Strict): 23 samples (0.91\% of 2,527)
+\item Sex Outlier (Threshold): 8 samples (0.32\% of 2,527)
+\item Technical: 33 samples (1.31\% of 2,527)
+\item Z-score: 7 samples (0.28\% of 2,527)
+\item pQTL: 14 samples (0.55\% of 2,527)
+\end{itemize}
+
+\textbf{Final clean dataset}:
+\begin{itemize}
+\item \textbf{Samples passing all QC}: \textbf{2,443 samples} (96.68\% retention rate from 2,527 analysis-ready samples)
+\item \textbf{Biological proteins}: 5,416 (24 control probes excluded from released data)
+\item \textbf{Clean NPX matrix}: 2,443 samples $\times$ 5,416 proteins
+\end{itemize}
+
+\section{Overall Sample Flow Summary}
+
+\begin{tcolorbox}[colback=white,colframe=black,boxrule=1pt]
+\begin{verbatim}
+Raw parquet:              2,600 samples (100%)
+  ↓ Filter controls       -20 (removed)
+Biological samples:       2,580 samples (100%)
+  ↓ Initial QC            -6 (5 FINNGEN + 1 non-FinnGen, removed)
+After QC:                 2,574 samples (99.8%)
+  ↓ Exclude non-FinnGen   -47 (excluded from analysis-ready)
+Analysis-ready:           2,527 samples (98.0%)
+  ↓ TECHNICAL OUTLIER DETECTION (Parallel flagging on base matrix)
+     PCA:                  22 flagged (0.87%)
+     Technical:            33 flagged (1.31%)
+     Z-score:              7 flagged (0.28%)
+  ↓ PCA-cleaned matrix:    2,505 samples (2,527 - 22 PCA outliers)
+  ↓ PROVENANCE STEPS (Sequential on PCA-cleaned matrix)
+     Sex:                  31 flagged (1.24%: 23 strict + 8 threshold)
+     pQTL:                 14 flagged (0.56%)
+  ↓ Final QC Integration: Combine flags (union logic)
+     Unique samples flagged: 84 (3.32% of 2,527)
+     Overlaps: 16 samples flagged by multiple methods
+  ↓ Final QC Integration: Remove all flagged samples
+Final (pre-normalisation): 2,443 samples (96.68% of 2,527 analysis-ready)
+\end{verbatim}
+\end{tcolorbox}
+
+\textbf{Total samples removed from raw (2,600 $\to$ 2,443)}: 157 samples (6.04\%)
+\begin{itemize}
+\item Controls/blanks: 20 (0.77\%)
+\item Initial QC failures: 6 (0.23\%) [5 FINNGEN + 1 non-FinnGen]
+\item Non-FinnGen samples (excluded): 47 (1.81\%) [excluded from analysis-ready]
+\item Unique outliers flagged: 84 (3.23\% of 2,600 raw, 3.32\% of 2,527 analysis-ready)
+  \begin{itemize}
+    \item Initial QC: 0 samples (not tracked in refactored pipeline)
+    \item PCA: 22 samples
+    \item Sex: 31 samples (23 strict mismatches + 8 threshold outliers)
+    \item Technical: 33 samples
+    \item Z-score: 7 samples
+    \item pQTL: 14 samples
+    \item Overlaps: 16 samples flagged by multiple methods (9 by 2 methods + 7 by 3 methods)
+  \end{itemize}
+\end{itemize}
+
+\textbf{Retention rate}: 96.68\% (2,443/2,527 analysis-ready samples) or 94.69\% (2,443/2,580 biological samples)
+
+\section{Protein QC}
+
+\textbf{5,416 biological proteins} in released data (5,440 total proteins at import, 24 control probes excluded)
+
+\textbf{Control probes removed}: The following 24 control probes are excluded from the released data files:
+\begin{itemize}
+\item 8 Incubation controls (Incubation control 1-8)
+\item 8 Extension controls (Extension control 1-8)
+\item 8 Amplification controls (Amplification control 1-8)
+\end{itemize}
+
+\textbf{Rationale for control probe exclusion}: Control probes are technical quality control measures used by the Olink platform for assay monitoring and are not biological proteins. They are excluded from the released data to ensure only biological proteins are available for downstream analysis.
+
+\textbf{Rationale for biological protein retention}: All 5,416 biological proteins passed initial QC with $<10\%$ missing data threshold. Proteins were not excluded during QC as the full list is important for:
+\begin{itemize}
+\item Future batch comparisons and harmonisation
+\item Comprehensive proteome coverage
+\item Cross-study validation (proteins with high warning rates in this data have been validated in previous EA3 study and UKBiobank PPP project)
+\end{itemize}
+
+\textbf{Protein panel}: Olink Explore HT (5K) - 5,440 total proteins (5,416 biological proteins in released data)
+
+\section{Quality Control Thresholds Summary}
+\label{sec:threshold_strategy}
+
+{\footnotesize
+\renewcommand{\arraystretch}{1.1}
+\begin{longtable}{p{3.5cm}p{5.5cm}p{6cm}}
+\toprule
+\textbf{Method} & \textbf{Threshold} & \textbf{Rationale} \\
+\midrule
+\endfirsthead
+
+\toprule
+\textbf{Method} & \textbf{Threshold} & \textbf{Rationale} \\
+\midrule
+\endhead
+
+\bottomrule
+\endfoot
+
+\textbf{Initial QC} & Missing data: 10\% per sample/protein & Balances retention with quality, aligned with Olink recommendations \\
+\textbf{PCA (PC1/PC2)} & mean $\pm$ $5 \times$ SD (after Olink scaling) & Matches Batch 1, $\sim 99.9999\%$ specificity \\
+\textbf{PCA (PC3/PC4)} & mean $\pm$ $5 \times$ SD & Sequential filtering, union of flags \\
+\textbf{PCA (Sample median)} & mean $\pm$ $5 \times$ SD & Detects extreme central tendency \\
+\textbf{PCA (Sample IQR)} & mean $\pm$ $5 \times$ SD & Detects unusual variability patterns \\
+\textbf{Sex mismatch} & predicted\_sex $\neq$ genetic\_sex (0.5 threshold) & Binary label error, severe classification errors \\
+\textbf{Sex outlier} & 0.5 threshold & Borderline predictions, mild warning \\
+\textbf{Technical (Plate/Batch/Processing)} & $5 \times$ MAD $\approx$ $4 \times$ SD & Robust, harmonised with z-score method \\
+\textbf{Technical (Sample mean NPX)} & $5 \times$ MAD $\approx$ $4 \times$ SD & Two-sided, robust to outliers \\
+\textbf{Technical (Sample SD NPX)} & median $+$ $4 \times$ MAD & One-sided upper, high variance detection \\
+\textbf{Technical (Missing rate)} & 5\% (fixed) & More stringent than Initial QC, catches borderline cases \\
+\textbf{Technical (QC failure rate)} & 30\% (fixed) & Olink QC flags, different from missing data \\
+\textbf{Z-score (Per-protein)} & $|Z| > 4$ & $\sim 99.994\%$ specificity, harmonised with Technical method \\
+\textbf{Z-score (Sample threshold)} & $>10\%$ proteins & Requires systematic issues, not isolated extremes \\
+\textbf{pQTL (MeanAbsZ)} & mean $+$ $4 \times$ SD & Population-based, SD-based (not MAD), exclusively used for outlier assignment \\
+\bottomrule
+\end{longtable}
+\renewcommand{\arraystretch}{1.0}
+}
+
+\section{Detailed File Formats and Specifications}
+\label{sec:detailed_formats}
+
+\subsection{Comprehensive Outliers List}
+
+\textbf{Files}:
+\begin{itemize}
+\item \texttt{comprehensive\_outliers\_list\_fg3\_batch\_02.tsv} (tab-separated values)
+\item \texttt{comprehensive\_outliers\_list\_fg3\_batch\_02.parquet} (Parquet format)
+\end{itemize}
+
+\subsubsection{Description}
+Contains all samples flagged as outliers by any QC method, with detailed QC flags and metrics.
+
+\subsubsection{Format}
+\begin{itemize}
+\item \textbf{Sample identifiers}: \texttt{SampleID}, \texttt{FINNGENID}, \texttt{BIOBANK\_PLASMA}
+\item \textbf{QC flags} (binary: 0 = not flagged, 1 = flagged):
+  \begin{itemize}
+    \item \texttt{QC\_initial\_qc}: Flagged by initial quality control (missing data $>10\%$)
+    \item \texttt{QC\_pca}: Flagged by PCA outlier detection
+    \item \texttt{QC\_sex\_mismatch}: Flagged as sex mismatch (severe, predicted\_sex $\neq$ genetic\_sex)
+    \item \texttt{QC\_sex\_outlier}: Flagged as sex outlier (mild, crosses 0.5 threshold)
+    \item \texttt{QC\_technical}: Flagged by technical outlier detection
+    \item \texttt{QC\_zscore}: Flagged by Z-score outlier detection
+    \item \texttt{QC\_pqtl}: Flagged by pQTL-based outlier detection
+    \item \texttt{QC\_flag}: Overall flag (1 if flagged by any method)
+  \end{itemize}
+\item \textbf{QC metrics} (raw values from each method):
+  \begin{itemize}
+    \item Initial QC: \texttt{QC\_initial\_qc\_missing\_rate}
+    \item PCA: \texttt{QC\_pca\_pc1}, \texttt{QC\_pca\_pc2}, \texttt{QC\_pca\_pc3}, \texttt{QC\_pca\_pc4} (principal component scores)
+    \item Sex: \texttt{QC\_sex\_predicted\_prob}, \texttt{QC\_sex\_predicted\_sex}, \texttt{QC\_sex\_genetic\_sex}
+    \item Technical: \texttt{QC\_technical\_mean\_npx}, \texttt{QC\_technical\_sd\_npx}, \texttt{QC\_technical\_missing\_rate}, \texttt{QC\_technical\_qc\_fail\_rate}
+    \item Z-score: \texttt{QC\_zscore\_n\_outlier\_proteins},\texttt{QC\_zscore\_pct\_outlier\_proteins},\\ \texttt{QC\_zscore\_max\_abs\_zscore}
+    \item pQTL: \texttt{QC\_pqtl\_mean\_abs\_z}, \texttt{QC\_pqtl\_max\_abs\_z}, \texttt{QC\_pqtl\_median\_abs\_residual}, \texttt{QC\_pqtl\_n\_prots}
+  \end{itemize}
+\item \textbf{Summary columns}:
+  \begin{itemize}
+    \item \texttt{N\_Methods}: Number of QC methods that flagged this sample (0-7)
+    \item \texttt{Detection\_Steps}: Comma-separated list of methods that flagged this sample (e.g., "PCA,SexMismatch,Technical")
+  \end{itemize}
+\end{itemize}
+
+\subsubsection{Use case}
+Identify which samples were flagged, by which methods, and review detailed metrics for each QC method.
+
+\subsection{QC Annotated Metadata}
+
+\textbf{Files}:
+\begin{itemize}
+\item \texttt{qc\_annotated\_metadata\_fg3\_batch\_02.tsv} (tab-separated values)
+\item \texttt{qc\_annotated\_metadata\_fg3\_batch\_02.parquet} (Parquet format)
+\end{itemize}
+
+\subsubsection{Description}
+Complete sample metadata (2,477 FinnGen samples) annotated with QC flags and metrics from all QC methods. Includes all original metadata columns plus QC information.
+
+\subsubsection{Format}
+\begin{itemize}
+\item \textbf{Original metadata columns}: All columns from the original metadata file, including:
+  \begin{itemize}
+    \item Sample identifiers: \texttt{FINNGENID}, \texttt{SAMPLE\_ID}
+    \item Collection information: \texttt{APPROX\_TIMESTAMP\_COLLECTION}, \texttt{APPROX\_TIMESTAMP\_PROCESSING}, \texttt{APPROX\_TIMESTAMP\_FREEZING}
+    \item Biobank information: \texttt{BIOBANK\_PLASMA}, \texttt{COHORT\_FINNGENID}
+    \item Disease cohort indicators: \texttt{Kidney}, \texttt{Kids}, \texttt{F64}, \texttt{MFGE8}, \texttt{Parkinsons}, \texttt{Metabolic}, \texttt{AMD}, \texttt{Rheuma}, \texttt{Pulmo}, \texttt{Chromosomal\_Abnormalities}, \texttt{Blood\_donors}, \texttt{Bridging\_samples}
+    \item Sample handling: \texttt{BARCODE}, \texttt{VOLUME}, \texttt{CONTAINER\_NAME}, \texttt{FREEZE\_THAW\_CYCLES}, \texttt{HEMOLYSIS}
+  \end{itemize}
+\item \textbf{QC flags and metrics}: Same structure as Comprehensive Outliers List (see Section \ref{sec:detailed_formats}.1)
+\item \textbf{Note}: Samples not flagged by any QC method will have \texttt{QC\_flag = 0} and \texttt{N\_Methods = 0}, with \texttt{Detection\_Steps = NA}
+\end{itemize}
+
+\subsubsection{Use case}
+Complete sample tracking with QC information for all samples, enabling filtering and analysis based on QC status whilst preserving all original metadata.
+
+\subsection{Clean Proteomics Dataset}
+
+\textbf{Files}:
+\begin{itemize}
+\item \texttt{npx\_matrix\_all\_qc\_passed\_fg3\_batch\_02.rds} (R data format)
+\item \texttt{npx\_matrix\_all\_qc\_passed\_fg3\_batch\_02.parquet} (Parquet format)
+\item \texttt{npx\_matrix\_all\_qc\_passed\_fg3\_batch\_02.tsv} (tab-separated values)
+\end{itemize}
+
+\subsubsection{Description}
+Clean protein expression matrix containing only samples that passed all QC filters.
+
+\subsubsection{Format}
+\begin{itemize}
+\item \textbf{Structure}:
+  \begin{itemize}
+    \item RDS file: R matrix format with row names (Sample IDs) and column names (protein identifiers)
+    \item Parquet file: Data table format with \texttt{SampleID} as the first column, followed by protein expression columns
+    \item TSV file: Tab-separated values format with \texttt{SampleID} as the first column, followed by protein expression columns
+  \end{itemize}
+\item \textbf{Dimensions}: 2,443 samples (rows) $\times$ 5,416 proteins (columns)
+\item \textbf{Row identifiers}:
+  \begin{itemize}
+    \item RDS: Row names contain Sample IDs (character format)
+    \item Parquet: First column \texttt{SampleID} contains Sample IDs (character format)
+    \item TSV: First column \texttt{SampleID} contains Sample IDs (character format)
+  \end{itemize}
+\item \textbf{Column identifiers}: Protein names (Olink protein identifiers, character format)
+\item \textbf{Values}: Raw NPX (Normalised Protein eXpression) values on the original Olink scale
+\item \textbf{Note}: This matrix contains raw NPX values (not normalised). Normalisation and inverse rank normalisation are performed in subsequent processing steps. \textbf{Control probes removed}: 24 control probes (8 incubation controls, 8 extension controls, 8 amplification controls) are excluded from the released data, leaving 5,416 biological proteins.
+\end{itemize}
+
+\subsubsection{Use case}
+Primary dataset for downstream analysis, containing only high-quality samples that passed all QC filters.
+
+\subsection{Proteomics Dataset Without Sample Exclusions Based on QC}
+
+\textbf{Files}:
+\begin{itemize}
+\item \texttt{npx\_matrix\_all\_2527\_samples\_fg3\_batch\_02.rds} (R data format)
+\item \texttt{npx\_matrix\_all\_2527\_samples\_fg3\_batch\_02.parquet} (Parquet format)
+\item \texttt{npx\_matrix\_all\_2527\_samples\_fg3\_batch\_02.tsv} (tab-separated values)
+\end{itemize}
+
+\subsubsection{Description}
+Protein expression matrix containing all 2,527 samples (2,477 FinnGen + 50 bridging samples) before QC outlier detection and removal. This dataset excludes non-FinnGen samples (n = 47 from analysis + 1 from Initial QC = 48 total) and control samples (n = 20), and includes all FinnGen samples eligible for analysis.
+
+\subsubsection{Format}
+\begin{itemize}
+\item \textbf{Structure}:
+  \begin{itemize}
+    \item RDS file: R matrix format with row names (Sample IDs) and column names (protein identifiers)
+    \item Parquet file: Data table format with \texttt{SampleID} as the first column, followed by protein expression columns
+    \item TSV file: Tab-separated values format with \texttt{SampleID} as the first column, followed by protein expression columns
+  \end{itemize}
+\item \textbf{Dimensions}: 2,527 samples (rows) $\times$ 5,416 proteins (columns)
+  \begin{itemize}
+    \item \textbf{Sample composition}:
+      \begin{itemize}
+        \item 2,477 FinnGen samples
+        \item 50 bridging samples
+      \end{itemize}
+    \item \textbf{Analysis-ready subset}: 2,527 samples (all samples in pre-QC dataset)
+    \item \textbf{Exclusions}:
+      \begin{itemize}
+        \item 48 non-FinnGen samples (47 from analysis + 1 from Initial QC, excluded from dataset)
+        \item 20 control samples removed during data processing:
+          \begin{itemize}
+            \item 4 Negative Controls (Negative Control 1-L1 through 4-L1)
+            \item 10 Plate Controls (Plate Control 1-L1 through 10-L1)
+            \item 6 Sample Controls (Sample Control 1-L1 through 6-L1)
+          \end{itemize}
+        \item 24 control probes removed from released data:
+          \begin{itemize}
+            \item 8 Incubation controls (Incubation control 1-8)
+            \item 8 Extension controls (Extension control 1-8)
+            \item 8 Amplification controls (Amplification control 1-8)
+          \end{itemize}
+        \item \textbf{Note}: Control probes are technical quality control measures used by the Olink platform and are excluded from the released data. The original data contained 5,440 proteins (5,416 biological + 24 control probes).
+      \end{itemize}
+  \end{itemize}
+\item \textbf{Row identifiers}:
+  \begin{itemize}
+    \item RDS: Row names contain Sample IDs (character format)
+    \item Parquet: First column \texttt{SampleID} contains Sample IDs (character format)
+    \item TSV: First column \texttt{SampleID} contains Sample IDs (character format)
+  \end{itemize}
+\item \textbf{Column identifiers}: Protein names (Olink protein identifiers, character format)
+\item \textbf{Values}: Raw NPX (Normalised Protein eXpression) values on the original Olink scale
+\item \textbf{Note}: This matrix contains raw NPX values and represents all FinnGen and bridge samples before QC outlier detection. Control samples and non-FinnGen samples have been excluded. Control probes (24 total) are excluded from the released data, leaving 5,416 biological proteins. Samples flagged by QC methods (PCA, sex mismatch, technical outliers, Z-score, pQTL) are still present in this matrix. For the final QCed dataset, use \texttt{npx\_matrix\_all\_qc\_passed\_fg3\_batch\_02.rds} (2,443 samples $\times$ 5,416 proteins after QC removal).
+\end{itemize}
+
+\subsubsection{Use case}
+\begin{itemize}
+\item Baseline dataset for comparing pre-QC and post-QC sample sets
+\item Analysis requiring all samples before outlier removal (for custom QC criteria)
+\item Cross-batch harmonisation using bridging samples (all 50 bridge samples included)
+\item Quality control validation and threshold sensitivity analysis
+\end{itemize}
+
+\vspace{0.5cm}
+\noindent\rule{\linewidth}{0.5pt}
+\vspace{0.5cm}
+
+\section{Notes}
+
+\begin{enumerate}
+\item \textbf{Bridge samples}: 50 bridge samples are included in the analysis-ready dataset (2,527 samples) and pre-QC dataset (2,527 samples) for cross-batch harmonisation. 48/50 bridge samples (96\%) have genetic sex information recovered.
+
+\item \textbf{Non-FinnGen samples}: 48 non-FinnGen samples were identified and excluded from analysis (47 from analysis-ready set + 1 from Initial QC). These samples are not included in the final clean dataset or comprehensive QC reports.
+
+\item \textbf{Duplicate FINNGENIDs}: 139 technical replicates were identified but retained in the dataset for analysis flexibility.
+
+\item \textbf{Kinship filtering}: The QCed set of samples (2,443 samples) has \textbf{not} been kinship filtered. Related individuals (e.g., sample duplicates, siblings, parent-offspring pairs) may be present in the dataset. Users requiring unrelated samples for analysis should apply kinship filtering separately using appropriate relationship thresholds (e.g., 3rd degree relationships, kinship coefficient $< 0.0884$).
+
+\item \textbf{Outlier detection strategy}: See Sections 4 and 5 for detailed methodology. The QC pipeline uses a two-component approach: technical outlier detection operates on the base matrix (2,527 samples), while provenance steps operate on the PCA-cleaned matrix (2,505 samples). Final QC integration uses union logic to combine all flags.
+
+\item \textbf{Multiple method flags}: 16 samples (19.0\% of all outliers) were flagged by multiple methods, providing high-confidence outlier identification.
+
+\item \textbf{Data format}: The clean NPX matrix contains raw NPX values (not normalised). Normalisation and inverse rank normalisation are performed in subsequent processing steps.
+
+\item \textbf{Pre-QC dataset composition}: The 2,527-sample pre-QC dataset includes all 2,477 FinnGen samples plus 50 bridge samples. All samples in the pre-QC dataset are analysis-ready.
+
+\item \textbf{Control probes}: 24 control probes (8 incubation, 8 extension, 8 amplification) are excluded from all released data files, leaving 5,416 biological proteins in the released datasets.
+
+\item \textbf{Document version v.2.1 update (January 15, 2026)}: This version reflects the refactored pipeline implementation. Key differences from v.02:
+  \begin{itemize}
+    \item Analysis-ready samples: 2,527 (vs 2,522 in v.02) - 5 additional samples
+    \item PCA outliers: 22 (vs 24 in v.02) - 2 fewer outliers
+    \item Technical outliers: 33 (vs 27 in v.02) - 6 additional outliers (parallel flagging detecting additional valid outliers)
+    \item Sex mismatch outliers: 23 (vs 18 in v.02) - 5 additional outliers
+    \item Sex threshold outliers: 8 (vs 13 in v.02) - 5 fewer outliers
+    \item Total outliers: 84 (vs 86 in v.02) - 2 fewer outliers overall
+    \item Final QC passed samples: 2,443 (vs 2,441 in v.02) - 2 additional samples
+    \item Multiple method overlaps: 16 (vs 15 in v.02) - 1 additional overlap
+  \end{itemize}
+  These differences are primarily due to:
+  \begin{itemize}
+    \item Different input sample counts (2,527 vs 2,522) affecting threshold calculations
+    \item Parallel flagging implementation enabling detection of additional valid outliers
+    \item Different constant protein removal (0 vs 8) affecting PCA calculations
+  \end{itemize}
+  All thresholds match the original implementation (5×SD for PCA, 5×MAD for technical, 4×SD for Z-score and pQTL).
+\end{enumerate}
+
+\noindent\rule{8cm}{0.4pt}
+
+\noindent
+\textbf{Pipeline Version}: January 2026 (Refactored) \\
+\textbf{Data Release}: FG3 Batch 2 \\
+\textbf{Final Sample Count}: 2,443 samples $\times$ 5,416 proteins (24 control probes excluded from released data)\\
+\textbf{Prepared by}: Reza Jabal, PhD - Broad Institute of MIT and Harvard
+\end{document}

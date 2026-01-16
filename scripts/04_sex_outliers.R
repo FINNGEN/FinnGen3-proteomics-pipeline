@@ -1424,15 +1424,12 @@ main <- function() {
   prev_step03_num <- "03"  # Z-score outliers step
   prev_step04_num <- "01"   # PCA outliers step (for PCA results)
 
-  # Try to load from step 03 (Z-score cleaned), fallback to step 02 (technical cleaned), then step 01 (PCA cleaned)
-  npx_matrix_path <- get_output_path(prev_step03_num, "npx_matrix_zscore_cleaned", batch_id, "outliers", config = config)
+  # CRITICAL: Use PCA-cleaned matrix to match original pipeline implementation
+  # Original pipeline uses PCA-cleaned matrix (2,498 samples) for sex detection
+  # This ensures consistency with original pipeline and proper model training
+  npx_matrix_path <- get_output_path(prev_step04_num, "npx_matrix_pca_cleaned", batch_id, "outliers", config = config)
   if (!file.exists(npx_matrix_path)) {
-    npx_matrix_path <- get_output_path("02", "npx_matrix_technical_cleaned", batch_id, "outliers", config = config)
-  }
-  if (!file.exists(npx_matrix_path)) {
-    npx_matrix_path <- get_output_path(prev_step04_num, "npx_matrix_pca_cleaned", batch_id, "outliers", config = config)
-  }
-  if (!file.exists(npx_matrix_path)) {
+    # Fallback to analysis-ready if PCA-cleaned not available
     npx_matrix_path <- get_output_path(prev_step00_num, "npx_matrix_analysis_ready", batch_id, "qc", config = config)
   }
   if (!file.exists(npx_matrix_path)) {

@@ -2,7 +2,7 @@
 
 **Platform**: Olink Explore HT (5K)
 
-**Version**: 1.0.0
+**Version**: 1.2.0
 
 **Release Date**: January 2026
 
@@ -26,10 +26,12 @@ A comprehensive, Docker-ready R pipeline for analyzing Olink Explore HT (5K) pro
 **Pipeline Summary:**
 After comprehensive quality control including PCA outlier detection, technical outlier detection, Z-score outlier detection, sex mismatch detection, and pQTL-based outlier detection, typically **~96-97% of analysis-ready samples** pass all QC filters and are retained for downstream analysis.
 
-**Expected Results** (based on FG3 Batch 2):
-- **Input**: 2,522 analysis-ready samples (2,477 FinnGen + 50 bridge samples)
-- **Final QCed**: ~2,441 samples (96.8% retention rate)
-- **Proteins**: 5,440 (all proteins retained through QC)
+> **Note on Example Numbers**: The example results and statistics provided throughout this README are based on **FinnGen 3 Batch 02** processing. Actual results will vary depending on your specific dataset characteristics, sample size, and data quality. For detailed, batch-specific statistics and comprehensive documentation, please refer to the versioned release notes in the [`/docs/`](./docs/) directory (e.g., `DATA_RELEASE_NOTE_Dec_2025_v2.1.md` and `DATA_RELEASE_NOTE_Dec_2025_v2.1.tex`).
+
+**Expected Results** (example from FG3 Batch 02):
+- **Input**: 2,527 analysis-ready samples (2,477 FinnGen + 50 bridge samples)
+- **Final QCed**: ~2,443 samples (96.7% retention rate)
+- **Proteins**: 5,440 total (5,416 biological proteins after control probe removal)
 
 ## Pipeline Architecture
 
@@ -39,13 +41,15 @@ After comprehensive quality control including PCA outlier detection, technical o
 flowchart TD
     Start([Start]) --> Loader[00_data_loader.R<br/>Load NPX matrix<br/>Prepare analysis-ready data]
 
-    Loader --> PCA[01_pca_outliers.R<br/>PCA analysis<br/>SD & IQR outlier detection]
+    Loader --> BaseMatrix[Base Matrix<br/>npx_matrix_analysis_ready<br/>2,527 samples]
 
-    PCA --> Technical[02_technical_outliers.R<br/>Plate/batch/processing outliers<br/>Sample-level QC]
+    BaseMatrix --> PCA[01_pca_outliers.R<br/>PCA analysis<br/>SD & IQR outlier detection<br/>Uses: base matrix]
 
-    Technical --> Zscore[03_zscore_outliers.R<br/>Z-score outliers<br/>Iterative detection]
+    BaseMatrix --> Technical[02_technical_outliers.R<br/>Plate/batch/processing outliers<br/>Sample-level QC<br/>Uses: base matrix<br/>Parallel flagging]
 
-    Zscore --> Sex[04_sex_outliers.R<br/>Sex mismatch detection<br/>Protein & genetic evidence]
+    BaseMatrix --> Zscore[03_zscore_outliers.R<br/>Z-score outliers<br/>Iterative detection<br/>Uses: base matrix<br/>Parallel flagging]
+
+    PCA --> Sex[04_sex_outliers.R<br/>Sex mismatch detection<br/>Protein & genetic evidence<br/>Uses: PCA-cleaned matrix]
 
     Sex --> PqtlTrain{05a_pqtl_training.R<br/>Optional: pQTL training<br/>Can be disabled}
 
@@ -80,6 +84,7 @@ flowchart TD
 
     style Start fill:#e1f5e1
     style Output fill:#ffe1e1
+    style BaseMatrix fill:#fff9e1
     style PCA fill:#e1f4ff
     style Technical fill:#e1f4ff
     style Zscore fill:#e1f4ff
@@ -102,12 +107,13 @@ flowchart TD
     Start([Multi-Batch Mode Start]) --> RefBatch[Reference Batch<br/>batch_02]
     Start --> OtherBatch[Other Batches<br/>batch_01, ...]
 
-    %% Reference Batch Processing (Sequential)
+    %% Reference Batch Processing (Parallel Flagging)
     RefBatch --> Ref00[00_data_loader.R<br/>Load NPX matrix<br/>Prepare data]
-    Ref00 --> Ref01[01_pca_outliers.R<br/>PCA outlier detection]
-    Ref01 --> Ref02[02_technical_outliers.R<br/>Technical outlier detection]
-    Ref02 --> Ref03[03_zscore_outliers.R<br/>Z-score outlier detection]
-    Ref03 --> Ref04[04_sex_outliers.R<br/>Sex mismatch detection]
+    Ref00 --> RefBase[Base Matrix<br/>npx_matrix_analysis_ready]
+    RefBase --> Ref01[01_pca_outliers.R<br/>PCA outlier detection<br/>Uses: base matrix]
+    RefBase --> Ref02[02_technical_outliers.R<br/>Technical outlier detection<br/>Uses: base matrix<br/>Parallel flagging]
+    RefBase --> Ref03[03_zscore_outliers.R<br/>Z-score outlier detection<br/>Uses: base matrix<br/>Parallel flagging]
+    Ref01 --> Ref04[04_sex_outliers.R<br/>Sex mismatch detection<br/>Uses: PCA-cleaned matrix]
     Ref04 --> Ref05a{05a_pqtl_training.R<br/>Optional: pQTL training}
     Ref05a -->|Enabled| Ref05aRun[pQTL Training]
     Ref05a -->|Disabled| Ref05
@@ -124,12 +130,13 @@ flowchart TD
     Ref10 --> Ref11[11_rank_normalize.R<br/>Rank normalization]
     Ref11 --> RefComplete([Reference Batch<br/>Complete])
 
-    %% Other Batch Processing
+    %% Other Batch Processing (Parallel Flagging)
     OtherBatch --> Other00[00_data_loader.R<br/>Load NPX matrix<br/>Prepare data]
-    Other00 --> Other01[01_pca_outliers.R<br/>PCA outlier detection]
-    Other01 --> Other02[02_technical_outliers.R<br/>Technical outlier detection]
-    Other02 --> Other03[03_zscore_outliers.R<br/>Z-score outlier detection]
-    Other03 --> Other04[04_sex_outliers.R<br/>Sex mismatch detection]
+    Other00 --> OtherBase[Base Matrix<br/>npx_matrix_analysis_ready]
+    OtherBase --> Other01[01_pca_outliers.R<br/>PCA outlier detection<br/>Uses: base matrix]
+    OtherBase --> Other02[02_technical_outliers.R<br/>Technical outlier detection<br/>Uses: base matrix<br/>Parallel flagging]
+    OtherBase --> Other03[03_zscore_outliers.R<br/>Z-score outlier detection<br/>Uses: base matrix<br/>Parallel flagging]
+    Other01 --> Other04[04_sex_outliers.R<br/>Sex mismatch detection<br/>Uses: PCA-cleaned matrix]
     Other04 --> Other05a{05a_pqtl_training.R<br/>Optional: pQTL training}
     Other05a -->|Enabled| Other05aRun[pQTL Training]
     Other05a -->|Disabled| Other05
@@ -159,6 +166,8 @@ flowchart TD
     style Start fill:#e1f5e1
     style RefBatch fill:#fff4e1
     style OtherBatch fill:#fff4e1
+    style RefBase fill:#fff9e1
+    style OtherBase fill:#fff9e1
     style Ref05a fill:#fff4e1
     style Ref05aRun fill:#e1f4ff
     style Ref05 fill:#e1f4ff
@@ -182,18 +191,27 @@ flowchart TD
 
 ## Quality Control Strategy
 
-The pipeline implements a **two-component QC strategy**:
+The pipeline implements a **two-component QC strategy** with **parallel flagging**:
 
-1. **Technical Outlier Detection** (Steps 01-03): Operates on the same base matrix (analysis-ready samples) to avoid cascading bias. Methods include:
-   - PCA-based outlier detection
-   - Technical outlier detection (plate, batch, processing time, sample-level)
-   - Z-score outlier detection
+1. **Technical Outlier Detection** (Steps 01-03): Operates on the **same base matrix** (`npx_matrix_analysis_ready`) to enable parallel flagging and avoid cascading bias. Methods include:
+   - **Step 01**: PCA-based outlier detection (uses base matrix)
+   - **Step 02**: Technical outlier detection (uses base matrix) - **parallel flagging**
+   - **Step 03**: Z-score outlier detection (uses base matrix) - **parallel flagging**
 
-2. **Provenance Steps** (Steps 04-05): Operate sequentially on the PCA-cleaned matrix to identify mismatches and probable sample swaps using samples that have already passed technical quality filters:
-   - Sex mismatch detection
-   - pQTL-based outlier detection
+   **Key Design Principle**: Steps 01, 02, and 03 all operate on the same base matrix independently, enabling parallel flagging. Final QC integration combines flags using union logic.
 
-All samples are flagged but not removed until final QC integration (Step 05d), which combines all flags using union logic and removes flagged samples from the base matrix.
+2. **Provenance Steps** (Steps 04-05b): Operate sequentially on the **PCA-cleaned matrix** (from Step 01) to identify mismatches and probable sample swaps using samples that have already passed technical quality filters:
+   - **Step 04**: Sex mismatch detection (uses PCA-cleaned matrix)
+   - **Step 05b**: pQTL-based outlier detection (uses PCA-cleaned matrix)
+
+   **Key Design Principle**: Provenance steps use PCA-cleaned matrix to ensure they operate on samples that have already passed technical quality filters, improving robustness and reducing false positives.
+
+All samples are flagged but not removed until final QC integration (Step 05d), which combines all flags using **union logic** and removes flagged samples from the base matrix.
+
+**Matrix Flow Architecture**:
+- **Base Matrix** (`npx_matrix_analysis_ready`): Used by Steps 01, 02, 03 for parallel flagging
+- **PCA-Cleaned Matrix** (`npx_matrix_pca_cleaned`): Used by Steps 04, 05b for provenance checks
+- **Final Integration**: Step 05d combines all flags from base matrix using union logic
 
 ## Pipeline Steps
 
@@ -235,7 +253,7 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
   ```
 
   where σ_PC_i is the standard deviation of PC_i and n is the number of samples (follows Olink documentation).
-- **Expected Results**: ~0.95% of analysis-ready samples flagged (e.g., 24/2,522)
+- **Expected Results**: ~0.87% of analysis-ready samples flagged (e.g., 22/2,527)
 - **Output**:
   - `01_npx_matrix_pca_cleaned.rds`: PCA-cleaned matrix
   - `01_pca_outliers_by_source.tsv`: Identified outliers
@@ -243,6 +261,8 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
 
 #### 02_technical_outliers.R
 - **Purpose**: Identify technical outliers using multiple orthogonal quality metrics
+- **Input Matrix**: `npx_matrix_analysis_ready` (base matrix from Step 00) - **parallel flagging**
+- **Design**: Operates on the same base matrix as Steps 01 and 03 to enable parallel flagging
 - **Detection Methods**:
   1. **Plate-level outliers** (5×MAD ≈ 4×SD): Flags all samples from outlier plates
   2. **Batch effects** (5×MAD ≈ 4×SD): Identifies temporal batch effects by collection month
@@ -257,7 +277,7 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
   - **5% missing rate threshold**: More stringent than initial QC's 10% threshold, catching samples with borderline missing data (5-10%) that may indicate quality degradation.
   - **30% QC failure rate**: Represents a clear quality failure threshold where samples have substantial measurement problems flagged by Olink's QC system.
 - **Note to Analysts**: High variance (SD outliers) may indicate technical measurement instability, but can also reflect genuine biological heterogeneity (e.g., acute disease states, dynamic physiological processes). Analysts should evaluate these samples in their biological context before exclusion.
-- **Expected Results**: ~1.07% of analysis-ready samples flagged (e.g., 27/2,522)
+- **Expected Results**: ~1.31% of analysis-ready samples flagged (e.g., 33/2,527)
 - **Output**:
   - `02_npx_matrix_technical_cleaned.rds`: Technical-cleaned matrix
   - `02_technical_outlier_summary.tsv`: All flagged samples with source flags
@@ -266,6 +286,8 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
 
 #### 03_zscore_outliers.R
 - **Purpose**: Protein-centric outlier detection using per-protein Z-scores
+- **Input Matrix**: `npx_matrix_analysis_ready` (base matrix from Step 00) - **parallel flagging**
+- **Design**: Operates on the same base matrix as Steps 01 and 02 to enable parallel flagging
 - **Method**:
   1. Calculate per-protein Z-scores: `Z = (NPX - protein_mean) / protein_SD`
   2. Flag extreme values: `|Z| > 4`
@@ -275,7 +297,7 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
 - **Rationale**:
   - **|Z| > 4 threshold**: Aligned with 5×MAD threshold from Technical Outlier Detection for consistency. More stringent than typical 3×SD (99.7%) to reduce false positives in high-throughput data.
   - **>10% proteins threshold**: Requires samples to have extreme values across many proteins, preventing flagging of samples with isolated extreme measurements (which may be biologically valid). Indicates systematic measurement issues, sample degradation, or contamination.
-- **Expected Results**: ~0.28% of analysis-ready samples flagged (e.g., 7/2,522)
+- **Expected Results**: ~0.28% of analysis-ready samples flagged (e.g., 7/2,527)
 - **Output**:
   - `03_npx_matrix_zscore_cleaned.rds`: Z-score-cleaned matrix
   - `03_zscore_outliers_list.tsv`: Z-score outliers
@@ -294,11 +316,11 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
      - Definition: Samples where predicted sex label (based on 0.5 probability threshold) differs from genetic sex
      - Logic: `predicted_sex != genetic_sex`
      - Purpose: Identify actual classification errors
-     - Expected: ~0.72% of PCA-cleaned samples (e.g., 18/2,498)
+     - Expected: ~0.92% of PCA-cleaned samples (e.g., 23/2,505)
   2. **Sex Outliers** (threshold-based deviations, NOT strict mismatches):
      - Definition: Samples where predicted female probability deviates from expected thresholds but predicted_sex still matches genetic_sex
      - Purpose: Identify borderline cases with unusual predicted probabilities
-     - Expected: ~0.52% of PCA-cleaned samples (e.g., 13/2,498)
+     - Expected: ~0.32% of PCA-cleaned samples (e.g., 8/2,505)
 - **Note to Analysts**: Biological factors beyond sample swaps can produce sex-atypical proteomic profiles. This includes samples from individuals undergoing gender-affirming hormone therapy, paediatric samples (where sex-specific signatures may be less pronounced), and individuals with sex chromosome abnormalities. These flags reflect biological variation rather than technical errors. Analysts should evaluate flagged samples in their clinical and developmental context before exclusion.
 - **Output**:
   - `04_sex_predictions.tsv`: All samples with predicted probabilities
@@ -325,7 +347,7 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
   - **Note**: Uses standard deviation (SD), not median absolute deviation (MAD), for consistency with normal distribution assumptions. For comparison, 4×SD ≈ 5×MAD (since MAD/SD ≈ 0.798 for normal distributions).
   - **Outlier assignment**: EXCLUSIVELY based on this metric
 - **Note to Analysts**: Outliers could be potential sample swaps or other technical issues causing discordance between observed protein levels and genotype-predicted levels. Analysts should review flagged samples with metadata on disease state, treatment history, and sample type before attributing discordance solely to technical error.
-- **Expected Results**: ~0.56% of PCA-cleaned samples flagged (e.g., 14/2,498)
+- **Expected Results**: ~0.56% of PCA-cleaned samples flagged (e.g., 14/2,505)
 - **Output**:
   - `05b_pqtl_outliers.tsv`: Samples flagged as outliers (MeanAbsZ-based)
   - `05b_pqtl_stats.tsv`: Full statistics for all samples
@@ -361,9 +383,9 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
   - Samples flagged by multiple methods provide high-confidence outlier identification
 - **Expected Results**:
   - Total samples tracked: Analysis-ready samples + Initial QC FINNGEN failures
-  - Unique samples flagged: ~3.4% of analysis-ready samples (e.g., 86/2,522)
-  - Samples flagged by multiple methods: ~17% of all flagged samples (e.g., 15/86)
-  - Final clean dataset: ~96.8% retention rate (e.g., 2,441/2,522)
+  - Unique samples flagged: ~3.3% of analysis-ready samples (e.g., 84/2,527)
+  - Samples flagged by multiple methods: ~19% of all flagged samples (e.g., 16/84)
+  - Final clean dataset: ~96.7% retention rate (e.g., 2,443/2,527)
 - **Output**:
   - `05d_comprehensive_outliers_list.tsv` / `.parquet`: All flagged samples with QC annotations
   - `05d_qc_annotated_metadata.tsv` / `.parquet`: Metadata with QC flags and metrics
@@ -462,30 +484,30 @@ Raw parquet:              2,600 samples (100%)
 Biological samples:       2,580 samples (100%)
   ↓ Initial QC            -6 (5 FINNGEN + 1 non-FinnGen, removed)
 After QC:                 2,574 samples (99.8%)
-  ↓ Exclude non-FinnGen   -53 (52 from analysis + 1 from Initial QC, excluded)
-Analysis-ready:           2,522 samples (97.8%)
-  ↓ TECHNICAL OUTLIER DETECTION (Sequential flagging on base matrix)
-     PCA:                  24 flagged (0.95%)
-     Technical:            27 flagged (1.07%)
+  ↓ Exclude non-FinnGen   -47 (excluded from analysis-ready)
+Analysis-ready:           2,527 samples (98.0%)
+  ↓ TECHNICAL OUTLIER DETECTION (Parallel flagging on base matrix)
+     PCA:                  22 flagged (0.87%)
+     Technical:            33 flagged (1.31%)
      Z-score:              7 flagged (0.28%)
-  ↓ PCA-cleaned matrix:    2,498 samples (2,522 - 24 PCA outliers)
+  ↓ PCA-cleaned matrix:    2,505 samples (2,527 - 22 PCA outliers)
   ↓ PROVENANCE STEPS (Sequential on PCA-cleaned matrix)
-     Sex:                  31 flagged (1.24%: 18 strict + 13 threshold)
+     Sex:                  31 flagged (1.24%: 23 strict + 8 threshold)
      pQTL:                 14 flagged (0.56%)
   ↓ Final QC Integration: Combine flags (union logic)
-     Unique samples flagged: 86 (3.41% of 2,522)
-     Overlaps: 15 samples flagged by multiple methods
+     Unique samples flagged: 84 (3.32% of 2,527)
+     Overlaps: 16 samples flagged by multiple methods
   ↓ Final QC Integration: Remove all flagged samples
-Final (pre-normalization): 2,441 samples (96.79% of 2,522 analysis-ready)
+Final (pre-normalization): 2,443 samples (96.68% of 2,527 analysis-ready)
 ```
 
-**Total samples removed from raw (2,600 → 2,441)**: 159 samples (6.12%)
+**Total samples removed from raw (2,600 → 2,443)**: 157 samples (6.04%)
 - Controls/blanks: 20 (0.77%)
 - Initial QC failures: 6 (0.23%) [5 FINNGEN + 1 non-FinnGen]
-- Non-FinnGen samples (excluded): 53 (2.04%)
-- Unique outliers flagged: 86 (3.31% of 2,600 raw, 3.41% of 2,522 analysis-ready)
+- Non-FinnGen samples (excluded): 47 (1.81%)
+- Unique outliers flagged: 84 (3.23% of 2,600 raw, 3.32% of 2,527 analysis-ready)
 
-**Retention rate**: 96.79% (2,441/2,522 analysis-ready samples) or 94.61% (2,441/2,580 biological samples)
+**Retention rate**: 96.68% (2,443/2,527 analysis-ready samples) or 94.69% (2,443/2,580 biological samples)
 
 ## Protein QC
 
@@ -654,7 +676,7 @@ echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
 # Pull the image
 docker pull ghcr.io/USERNAME/fg3-olink-pipeline:latest
 
-# Or pull a specific version
+# Or pull a specific version (e.g., v1.2.0)
 docker pull ghcr.io/USERNAME/fg3-olink-pipeline:1.0.0
 
 # Run the pipeline
@@ -788,7 +810,7 @@ If you use this pipeline, please cite:
 
 - **Pipeline**: FinnGen 3 Olink Proteomics Analysis Pipeline
 - **Author**: Reza Jabal, PhD (rjabal@broadinstitute.org)
-- **Version**: 1.0.0
+- **Version**: 1.2.0
 - **Release Date**: January 2026
 - **Platform**: Olink Explore HT (5K)
 

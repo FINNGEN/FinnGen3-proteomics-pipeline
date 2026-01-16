@@ -377,22 +377,23 @@ combine_technical_outliers <- function(plate_outliers, batch_outliers,
 # Main execution
 main <- function() {
 
-  # Load data from previous step (Step 01 - PCA cleaned)
-  log_info("Loading data from previous step (Step 01)")
-  prev_step01_num <- "01"
+  # Load data from previous step (Step 00 - analysis-ready base matrix)
+  # CRITICAL: Use base matrix for parallel flagging (matches original pipeline design)
+  # All outlier detection steps (01, 02, 03) now use the same base matrix for parallel flagging
+  log_info("Loading data from previous step (Step 00)")
   prev_step00_num <- "00"
 
-  npx_matrix_path <- get_output_path(prev_step01_num, "npx_matrix_pca_cleaned", batch_id, "outliers", config = config)
+  npx_matrix_path <- get_output_path(prev_step00_num, "npx_matrix_analysis_ready", batch_id, "qc", config = config)
   metadata_path <- get_output_path(prev_step00_num, "metadata", batch_id, "qc", config = config)
 
   if (!file.exists(npx_matrix_path)) {
-    stop("NPX matrix file not found: ", npx_matrix_path, ". Run Step 01 first.")
+    stop("NPX matrix file not found: ", npx_matrix_path, ". Run Step 00 first.")
   }
   if (!file.exists(metadata_path)) {
     stop("Metadata file not found: ", metadata_path, ". Run Step 00 first.")
   }
 
-  log_info("Using PCA-cleaned NPX matrix from Step 01: {npx_matrix_path}")
+  log_info("Using base NPX matrix (step 00) for parallel outlier flagging: {npx_matrix_path}")
   npx_matrix <- readRDS(npx_matrix_path)
   metadata <- readRDS(metadata_path)
 

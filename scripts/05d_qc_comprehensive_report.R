@@ -199,7 +199,16 @@ main <- function() {
     }
 
     # step 05b: pQTL outliers
+    # Try multiple possible file naming patterns (step_num can be "05" or "05b")
     pqtl_path <- get_output_path("05b", "pqtl_outliers", batch_id, "outliers", "tsv", config = config)
+    if (!file.exists(pqtl_path)) {
+        # Fallback 1: Try with step prefix using "05b"
+        pqtl_path <- get_output_path("05b", "05b_pqtl_outliers", batch_id, "outliers", "tsv", config = config)
+    }
+    if (!file.exists(pqtl_path)) {
+        # Fallback 2: Try with step "05" (actual step_num from script name)
+        pqtl_path <- get_output_path("05", "05b_pqtl_outliers", batch_id, "outliers", "tsv", config = config)
+    }
     if (file.exists(pqtl_path)) {
         pqtl_dt <- fread(pqtl_path)
         # Can be either SampleID or FINNGENID
