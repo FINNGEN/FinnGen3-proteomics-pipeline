@@ -1,12 +1,18 @@
 #!/usr/bin/env Rscript
-
-#################################################
-# Script: 02_technical_outliers.R
+# ==============================================================================
+# 02_technical_outliers.R - Technical Outlier Detection
+# ==============================================================================
+#
+# Purpose:
+#   Identifies technical outliers using multiple orthogonal quality metrics:
+#   plate-level outliers, batch effects (by collection month), processing time
+#   outliers, and sample-level outliers (mean NPX, SD NPX, missing rate, QC
+#   failure rate). Operates on the base analysis-ready matrix for parallel
+#   flagging architecture.
+#
 # Author: Reza Jabal, PhD (rjabal@broadinstitute.org)
-# Description: Detect technical outliers based on plate and batch effects
-#              Refactored version - loads from Step 01 (PCA-cleaned matrix)
 # Date: December 2025
-#################################################
+# ==============================================================================
 
 suppressPackageStartupMessages({
   library(data.table)

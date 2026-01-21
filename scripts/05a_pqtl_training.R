@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # ==============================================================================
-# 07a_pqtl_training.R - Robust pQTL Selection via Stability Selection
+# 05a_pqtl_training.R - Robust pQTL Selection via Stability Selection
 # ==============================================================================
 #
 # Purpose:

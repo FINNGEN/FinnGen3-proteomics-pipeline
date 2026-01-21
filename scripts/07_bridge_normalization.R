@@ -1,13 +1,17 @@
 #!/usr/bin/env Rscript
-
-#################################################
-# Script: 07_bridge_normalization.R
+# ==============================================================================
+# 07_bridge_normalization.R - Enhanced Bridge Sample Normalisation
+# ==============================================================================
+#
+# Purpose:
+#   Enhanced bridge sample normalisation for multi-batch harmonisation. Provides
+#   median-based and quantile-based normalisation methods using bridge samples
+#   from multiple batches. Optional step that is only used in multi-batch mode
+#   for cross-batch data integration.
+#
 # Author: Reza Jabal, PhD (rjabal@broadinstitute.org)
-# Description: Enhanced bridge sample normalization for batch harmonization
-#              Refactored version
-#              Refactored version
 # Date: December 2025
-#################################################
+# ==============================================================================
 
 suppressPackageStartupMessages({
   library(data.table)
@@ -52,14 +56,14 @@ config <- read_yaml(config_file)
 # Set up logging with batch-aware path
 log_path <- get_log_path("09_bridge_normalization", batch_id, config = config)
 log_appender(appender_file(log_path))
-log_info("Starting enhanced bridge normalization for batch: {batch_id}")
+log_info("Starting enhanced bridge normalisation for batch: {batch_id}")
 
 # Set theme for plots
 theme_set(theme_bw())
 
-# Function to validate bridge samples for normalization
+# Function to validate bridge samples for normalisation
 validate_bridge_samples <- function(npx_matrix, bridge_samples) {
-  log_info("Validating bridge samples for normalization")
+  log_info("Validating bridge samples for normalisation")
 
   # Check bridge sample availability
   available_bridges <- intersect(rownames(npx_matrix), bridge_samples)
@@ -95,15 +99,15 @@ validate_bridge_samples <- function(npx_matrix, bridge_samples) {
   ))
 }
 
-# Function for enhanced bridge normalization
+# Function for enhanced bridge normalisation
 enhanced_bridge_normalization <- function(npx_matrix, bridge_samples, method = "median") {
-  log_info("Performing enhanced bridge normalization with method: {method}")
+  log_info("Performing enhanced bridge normalisation with method: {method}")
 
   # Validate bridge samples
   validation <- validate_bridge_samples(npx_matrix, bridge_samples)
 
   if(length(validation$high_quality_bridges) < 10) {
-    log_error("Insufficient high-quality bridge samples for normalization")
+    log_error("Insufficient high-quality bridge samples for normalisation")
     return(NULL)
   }
 
@@ -111,20 +115,20 @@ enhanced_bridge_normalization <- function(npx_matrix, bridge_samples, method = "
   bridge_data <- npx_matrix[validation$high_quality_bridges, ]
 
   if(method == "median") {
-    # Median-based normalization
+    # Median-based normalisation
     bridge_medians <- apply(bridge_data, 2, median, na.rm = TRUE)
     global_median <- median(bridge_medians, na.rm = TRUE)
     scaling_factors <- global_median / bridge_medians
 
   } else if(method == "mean") {
-    # Mean-based normalization
+    # Mean-based normalisation
     bridge_means <- apply(bridge_data, 2, mean, na.rm = TRUE)
     global_mean <- mean(bridge_means, na.rm = TRUE)
     scaling_factors <- global_mean / bridge_means
 
   } else if(method == "quantile") {
-    # Quantile normalization using bridge samples
-    log_info("Performing quantile normalization")
+    # Quantile normalisation using bridge samples
+    log_info("Performing quantile normalisation")
 
     # Get reference distribution from bridge samples
     bridge_quantiles <- apply(bridge_data, 2, function(x) {
@@ -132,7 +136,7 @@ enhanced_bridge_normalization <- function(npx_matrix, bridge_samples, method = "
     })
     reference_quantiles <- rowMeans(bridge_quantiles, na.rm = TRUE)
 
-    # Apply quantile normalization to full matrix
+    # Apply quantile normalisation to full matrix
     normalized_matrix <- apply(npx_matrix, 2, function(x) {
       x_ranks <- rank(x, na.last = "keep", ties.method = "average")
       x_probs <- x_ranks / (sum(!is.na(x)) + 1)
@@ -167,12 +171,12 @@ enhanced_bridge_normalization <- function(npx_matrix, bridge_samples, method = "
   }
 }
 
-# Function to harmonize with reference batch
+# Function to harmonise with reference batch
 harmonize_with_reference <- function(current_batch, reference_batch = NULL, bridge_samples) {
-  log_info("Harmonizing with reference batch")
+  log_info("Harmonising with reference batch")
 
   if(is.null(reference_batch)) {
-    log_info("No reference batch provided, using internal normalization")
+    log_info("No reference batch provided, using internal normalisation")
     return(enhanced_bridge_normalization(current_batch, bridge_samples, method = "median"))
   }
 
@@ -186,9 +190,9 @@ harmonize_with_reference <- function(current_batch, reference_batch = NULL, brid
   ))
 }
 
-# Function to evaluate normalization quality
+# Function to evaluate normalisation quality
 evaluate_bridge_normalization <- function(raw_matrix, normalized_matrix, bridge_samples) {
-  log_info("Evaluating bridge normalization quality")
+  log_info("Evaluating bridge normalisation quality")
 
   # Get bridge sample indices
   bridge_idx <- which(rownames(raw_matrix) %in% bridge_samples)
@@ -241,9 +245,9 @@ evaluate_bridge_normalization <- function(raw_matrix, normalized_matrix, bridge_
   ))
 }
 
-# Function to create bridge normalization plots
+# Function to create bridge normalisation plots
 create_bridge_plots <- function(raw_matrix, normalized_matrix, bridge_samples) {
-  log_info("Creating bridge normalization visualization")
+  log_info("Creating bridge normalisation visualisation")
 
   # Get bridge and non-bridge samples
   bridge_idx <- rownames(raw_matrix) %in% bridge_samples
@@ -303,7 +307,7 @@ main <- function() {
     error = function(e) FALSE
   )
 
-  # Check if enhanced bridge normalization should be run
+  # Check if enhanced bridge normalisation should be run
   run_enhanced_bridge <- tryCatch(
     isTRUE(config$parameters$normalization$run_enhanced_bridge),
     error = function(e) FALSE
@@ -360,30 +364,30 @@ main <- function() {
   # Get bridge sample IDs
   bridge_samples <- bridge_result$bridge_ids
 
-  # Perform enhanced bridge normalization
+  # Perform enhanced bridge normalisation
   norm_result <- enhanced_bridge_normalization(
     npx_matrix,
     bridge_samples,
     method = "median"  # Can be "median", "mean", or "quantile"
   )
 
-  # Also try quantile normalization
+  # Also try quantile normalisation
   norm_quantile <- enhanced_bridge_normalization(
     npx_matrix,
     bridge_samples,
     method = "quantile"
   )
 
-  # Evaluate normalization
+  # Evaluate normalisation
   eval_median <- evaluate_bridge_normalization(npx_matrix, norm_result$normalized_matrix, bridge_samples)
   eval_quantile <- evaluate_bridge_normalization(npx_matrix, norm_quantile$normalized_matrix, bridge_samples)
 
-  # Compare with step 06 normalization if available (for multi-batch mode)
+  # Compare with step 06 normalisation if available (for multi-batch mode)
   step08_cv_reduction <- NULL
   if (multi_batch_mode) {
     log_info("Comparing with step 06 normalization for CV reduction")
 
-    # Try to load step 06 normalized matrix
+    # Try to load step 06 normalised matrix
     step08_file <- get_output_path("06", "npx_matrix_normalized", batch_id, "normalized", config = config)
     if (file.exists(step08_file)) {
       step08_matrix <- readRDS(step08_file)

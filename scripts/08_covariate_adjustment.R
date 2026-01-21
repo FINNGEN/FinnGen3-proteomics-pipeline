@@ -1,13 +1,17 @@
 #!/usr/bin/env Rscript
-
-#################################################
-# Script: 08_covariate_adjustment.R
+# ==============================================================================
+# 08_covariate_adjustment.R - Covariate Adjustment
+# ==============================================================================
+#
+# Purpose:
+#   Adjusts proteomics data for biological covariates (age, sex, BMI, smoking)
+#   using linear regression. Preserves proteomic PCs (not adjusted) to maintain
+#   biological signal. Evaluates and visualises covariate effects before and
+#   after adjustment.
+#
 # Author: Reza Jabal, PhD (rjabal@broadinstitute.org)
-# Description: Adjust proteomics data for covariates
-#              Refactored version
-#              Refactored version
-# Date: December 2025
-#################################################
+# Date: December 2025 (Updated: January 2026 - Fixed logging and file path issues)
+# ==============================================================================
 
 suppressPackageStartupMessages({
   library(data.table)
@@ -42,7 +46,25 @@ script_dir <- tryCatch({
     }
   }
 }, error = function(e) getwd())
+source(file.path(script_dir, "path_utils.R"))
 source(file.path(script_dir, "08_helper_multicollinearity_adjustment.R"))
+
+# Load configuration first (needed for batch_id default)
+config_file <- Sys.getenv("PIPELINE_CONFIG", "")
+if (config_file == "" || !file.exists(config_file)) {
+  stop("PIPELINE_CONFIG environment variable not set or config file not found. Please provide path to config file.")
+}
+config <- read_yaml(config_file)
+
+# Get batch context
+batch_id <- Sys.getenv("PIPELINE_BATCH_ID", config$batch$default_batch_id %||% "batch_01")
+step_num <- get_step_number()
+
+# Set up logging with batch-aware path
+log_path <- get_log_path(step_num, batch_id, config = config)
+ensure_output_dir(log_path)
+log_appender(appender_file(log_path))
+log_info("Starting covariate adjustment for batch: {batch_id}")
 
 # Suppress "no visible binding" warnings for data.table operations
 utils::globalVariables(
@@ -60,13 +82,6 @@ utils::globalVariables(
     "group_size", "selected", "r_squared", "n_samples", "ci_lower",
     "ci_upper", "bonferroni_flag")
 )
-
-# Set up logging
-log_appender(appender_file())
-log_info("Starting covariate adjustment")
-
-# Load configuration
-config <- read_yaml("")
 
 # Set theme for plots
 theme_set(theme_bw())
@@ -86,7 +101,7 @@ load_proteomic_pcs <- function(pca_result_file, n_pcs = 10) {
 
 # Function to load and prepare covariates
 # NOTE: Proteomic PCs are NOT included in adjustment to preserve biological signal
-# They are loaded separately for evaluation/visualization purposes only
+# They are loaded separately for evaluation/visualisation purposes only
 prepare_covariates <- function(covariate_file, sample_ids, metadata) {
   log_info("Preparing covariates for adjustment (age, sex, BMI, smoking - proteomic PCs excluded to preserve biological signal)")
 
@@ -708,20 +723,20 @@ create_enhanced_covariate_plots <- function(npx_matrix, adjusted_matrix, effects
   full_results[, bonferroni_flag := ifelse(bonferroni_sig, "***", "")]
   sig_results[, bonferroni_flag := ifelse(bonferroni_sig, "***", "")]
 
-  # Save tables
-  fwrite(full_results,
-         ,
-         sep = "\t", quote = FALSE)
+  # Save tables (using global step_num, batch_id, config)
+  full_results_path <- get_output_path(step_num, "age_association_full_results", batch_id, "normalized", "tsv", config = config)
+  sig_results_path <- get_output_path(step_num, "age_association_significant_results", batch_id, "normalized", "tsv", config = config)
+  selected_results_path <- get_output_path(step_num, "age_association_selected_results", batch_id, "normalized", "tsv", config = config)
+  ensure_output_dir(full_results_path)
+  ensure_output_dir(sig_results_path)
+  ensure_output_dir(selected_results_path)
 
-  fwrite(sig_results,
-         ,
-         sep = "\t", quote = FALSE)
+  fwrite(full_results, full_results_path, sep = "\t", quote = FALSE)
+  fwrite(sig_results, sig_results_path, sep = "\t", quote = FALSE)
 
   # Selected proteins only (for volcano plot)
   selected_results <- full_results[selected == TRUE]
-  fwrite(selected_results,
-         ,
-         sep = "\t", quote = FALSE)
+  fwrite(selected_results, selected_results_path, sep = "\t", quote = FALSE)
 
   log_info("Saved results tables:")
   log_info("  - Full results (all proteins): {nrow(full_results)} proteins")
@@ -964,11 +979,10 @@ main <- function() {
   # Load data from previous steps
   log_info("Loading data from previous steps")
 
-  # Try loading from step 07 (enhanced bridge) first, fallback to step 06 (median normalization)
+  # Try loading from step 07 (enhanced bridge) first, fallback to step 06 (median normalisation)
   npx_file_candidates <- c(
-    ,
-    ,
-
+    get_output_path("07", "npx_matrix_bridge_normalized", batch_id, "normalized", config = config),
+    get_output_path("06", "npx_matrix_normalized", batch_id, "normalized", config = config)
   )
 
   npx_file <- NULL
@@ -985,26 +999,38 @@ main <- function() {
 
   log_info("Using normalized matrix: {npx_file}")
   npx_matrix <- readRDS(npx_file)
-  metadata <- readRDS()
+  metadata_path <- get_output_path("00", "metadata", batch_id, "qc", config = config)
+  if (!file.exists(metadata_path)) {
+    stop("Metadata file not found: {metadata_path}. Run step 00 first.")
+  }
+  metadata <- readRDS(metadata_path)
 
   # Get sample IDs
   sample_ids <- rownames(npx_matrix)
 
-  # Load proteomic PCs from step 01 (for evaluation/visualization only, NOT for adjustment)
+  # Load proteomic PCs from step 01 (for evaluation/visualisation only, NOT for adjustment)
   log_info("Loading proteomic PCs from PCA analysis (for evaluation/visualization only - NOT used in adjustment)")
+  pca_result_path <- get_output_path("01", "pca_result", batch_id, "outliers", config = config)
+  if (!file.exists(pca_result_path)) {
+    stop("PCA result file not found: {pca_result_path}. Run step 01 first.")
+  }
   proteomic_pcs <- load_proteomic_pcs(
-    ,
+    pca_result_path,
     n_pcs = 10
   )
 
   # Prepare covariates (age, sex, BMI, smoking - proteomic PCs excluded)
+  covariate_file <- config$covariates$covariate_file
+  if (is.null(covariate_file) || !file.exists(covariate_file)) {
+    stop("Covariate file not found: {covariate_file}. Check config.")
+  }
   covariate_result <- prepare_covariates(
-    config$covariates$covariate_with_smoking,
+    covariate_file,
     sample_ids,
     metadata
   )
 
-  # Merge proteomic PCs into covariates for evaluation/visualization purposes only
+  # Merge proteomic PCs into covariates for evaluation/visualisation purposes only
   # They are NOT used in the adjustment step
   pcs_aligned <- merge(data.table(SAMPLE_ID = sample_ids), proteomic_pcs,
                        by.x = "SAMPLE_ID", by.y = "SampleID", all.x = TRUE)
@@ -1084,54 +1110,79 @@ main <- function() {
   # Save outputs
   log_info("Saving covariate adjustment results")
 
-  saveRDS(adjusted_matrix, )
-  saveRDS(covariate_result, )
-  saveRDS(effects_before, )
-  saveRDS(effects_after, )
+  adjusted_matrix_path <- get_output_path(step_num, "npx_matrix_covariate_adjusted", batch_id, "normalized", config = config)
+  covariate_result_path <- get_output_path(step_num, "covariate_result", batch_id, "normalized", config = config)
+  effects_before_path <- get_output_path(step_num, "covariate_effects_before", batch_id, "normalized", config = config)
+  effects_after_path <- get_output_path(step_num, "covariate_effects_after", batch_id, "normalized", config = config)
+
+  ensure_output_dir(adjusted_matrix_path)
+  ensure_output_dir(covariate_result_path)
+  ensure_output_dir(effects_before_path)
+  ensure_output_dir(effects_after_path)
+
+  saveRDS(adjusted_matrix, adjusted_matrix_path)
+  saveRDS(covariate_result, covariate_result_path)
+  saveRDS(effects_before, effects_before_path)
+  saveRDS(effects_after, effects_after_path)
 
   # Save tables
-  fwrite(effects_before$summary, , sep = "\t")
-  fwrite(effects_after$summary, , sep = "\t")
+  effects_before_summary_path <- get_output_path(step_num, "covariate_effects_before_summary", batch_id, "normalized", "tsv", config = config)
+  effects_after_summary_path <- get_output_path(step_num, "covariate_effects_after_summary", batch_id, "normalized", "tsv", config = config)
+  ensure_output_dir(effects_before_summary_path)
+  ensure_output_dir(effects_after_summary_path)
+  fwrite(effects_before$summary, effects_before_summary_path, sep = "\t")
+  fwrite(effects_after$summary, effects_after_summary_path, sep = "\t")
 
   # Save HIGH PRIORITY plots (Before/After Comparisons)
   log_info("Saving HIGH PRIORITY plots: Before/After comparisons")
-  ggsave(,
-         covariate_plots$age_comparison, width = 10, height = 6)
-  ggsave(,
-         covariate_plots$sex_comparison, width = 10, height = 6)
-  ggsave(,
-         covariate_plots$ppc1_comparison, width = 10, height = 6)
+  age_comparison_path <- get_output_path(step_num, "covariate_age_comparison", batch_id, "normalized", "pdf", config = config)
+  sex_comparison_path <- get_output_path(step_num, "covariate_sex_comparison", batch_id, "normalized", "pdf", config = config)
+  ppc1_comparison_path <- get_output_path(step_num, "covariate_ppc1_comparison", batch_id, "normalized", "pdf", config = config)
+  ensure_output_dir(age_comparison_path)
+  ensure_output_dir(sex_comparison_path)
+  ensure_output_dir(ppc1_comparison_path)
+  ggsave(age_comparison_path, covariate_plots$age_comparison, width = 10, height = 6)
+  ggsave(sex_comparison_path, covariate_plots$sex_comparison, width = 10, height = 6)
+  ggsave(ppc1_comparison_path, covariate_plots$ppc1_comparison, width = 10, height = 6)
 
   if (!is.null(covariate_plots$ppc2_comparison)) {
-    ggsave(,
-           covariate_plots$ppc2_comparison, width = 10, height = 6)
+    ppc2_comparison_path <- get_output_path(step_num, "covariate_ppc2_comparison", batch_id, "normalized", "pdf", config = config)
+    ensure_output_dir(ppc2_comparison_path)
+    ggsave(ppc2_comparison_path, covariate_plots$ppc2_comparison, width = 10, height = 6)
   }
 
   # Save HIGH PRIORITY plots (Effect Reduction Scatter)
   log_info("Saving HIGH PRIORITY plots: Effect reduction scatter plots")
-  ggsave(,
-         covariate_plots$age_scatter, width = 10, height = 8)
-  ggsave(,
-         covariate_plots$sex_scatter, width = 10, height = 8)
-  ggsave(,
-         covariate_plots$ppc1_scatter, width = 10, height = 8)
+  age_scatter_path <- get_output_path(step_num, "covariate_age_scatter", batch_id, "normalized", "pdf", config = config)
+  sex_scatter_path <- get_output_path(step_num, "covariate_sex_scatter", batch_id, "normalized", "pdf", config = config)
+  ppc1_scatter_path <- get_output_path(step_num, "covariate_ppc1_scatter", batch_id, "normalized", "pdf", config = config)
+  ensure_output_dir(age_scatter_path)
+  ensure_output_dir(sex_scatter_path)
+  ensure_output_dir(ppc1_scatter_path)
+  ggsave(age_scatter_path, covariate_plots$age_scatter, width = 10, height = 8)
+  ggsave(sex_scatter_path, covariate_plots$sex_scatter, width = 10, height = 8)
+  ggsave(ppc1_scatter_path, covariate_plots$ppc1_scatter, width = 10, height = 8)
 
   # Save HIGH PRIORITY plots (Covariate Importance)
   log_info("Saving HIGH PRIORITY plots: Covariate importance comparison")
-  ggsave(,
-         covariate_plots$importance_comparison, width = 10, height = 6)
+  importance_comparison_path <- get_output_path(step_num, "covariate_importance_comparison", batch_id, "normalized", "pdf", config = config)
+  ensure_output_dir(importance_comparison_path)
+  ggsave(importance_comparison_path, covariate_plots$importance_comparison, width = 10, height = 6)
 
   # Save Volcano plots
   log_info("Saving age-associated volcano plots")
-  ggsave(,
-         covariate_plots$age_volcano, width = 10, height = 8)
-  ggsave(,
-         covariate_plots$age_volcano_adjusted, width = 10, height = 8)
+  age_volcano_path <- get_output_path(step_num, "covariate_age_volcano", batch_id, "normalized", "pdf", config = config)
+  age_volcano_adjusted_path <- get_output_path(step_num, "covariate_age_volcano_adjusted", batch_id, "normalized", "pdf", config = config)
+  ensure_output_dir(age_volcano_path)
+  ensure_output_dir(age_volcano_adjusted_path)
+  ggsave(age_volcano_path, covariate_plots$age_volcano, width = 10, height = 8)
+  ggsave(age_volcano_adjusted_path, covariate_plots$age_volcano_adjusted, width = 10, height = 8)
 
   # Save PCA biplot comparison using filled.contour (base R graphics)
   log_info("Saving PCA contour density plots with filled.contour")
-  pdf(,
-      width = 14, height = 7)
+  pca_contour_path <- get_output_path(step_num, "covariate_pca_contour_comparison", batch_id, "normalized", "pdf", config = config)
+  ensure_output_dir(pca_contour_path)
+  pdf(pca_contour_path, width = 14, height = 7)
 
   par(mfrow = c(1, 2), mar = c(4, 4, 3, 6))
 
@@ -1177,12 +1228,14 @@ main <- function() {
   # Save MEDIUM PRIORITY plots
   log_info("Saving MEDIUM PRIORITY plots")
   if (!is.null(covariate_plots$all_ppcs_facet)) {
-    ggsave(,
-           covariate_plots$all_ppcs_facet, width = 16, height = 10)
+    all_ppcs_facet_path <- get_output_path(step_num, "covariate_all_ppcs_facet", batch_id, "normalized", "pdf", config = config)
+    ensure_output_dir(all_ppcs_facet_path)
+    ggsave(all_ppcs_facet_path, covariate_plots$all_ppcs_facet, width = 16, height = 10)
   }
 
-  ggsave(,
-         covariate_plots$variance_decomposition, width = 8, height = 6)
+  variance_decomp_path <- get_output_path(step_num, "covariate_variance_decomposition", batch_id, "normalized", "pdf", config = config)
+  ensure_output_dir(variance_decomp_path)
+  ggsave(variance_decomp_path, covariate_plots$variance_decomposition, width = 8, height = 6)
 
   # Print summary
   cat("\n=== COVARIATE ADJUSTMENT SUMMARY ===\n")

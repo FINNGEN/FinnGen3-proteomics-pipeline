@@ -1,13 +1,17 @@
 #!/usr/bin/env Rscript
-
-#################################################
-# Script: 05d_qc_comprehensive_report.R
+# ==============================================================================
+# 05d_qc_comprehensive_report.R - Comprehensive QC Report Generation
+# ==============================================================================
+#
+# Purpose:
+#   Generates comprehensive QC reports after all outlier detection steps. Integrates
+#   outliers from all QC methods (Initial QC, PCA, Technical, Z-score, Sex, pQTL)
+#   using union logic. Creates integrated outlier tracking visualisations, annotated
+#   metadata with QC flags, and clean matrices with all QC-passed samples.
+#
 # Author: Reza Jabal, PhD (rjabal@broadinstitute.org)
-# Description: Generate comprehensive QC reports after all outlier detection steps
-#              Refactored version - integrates outliers from Steps 01-05b
-#              Creates integrated outlier tracking, annotated metadata, and clean matrices
-# Date: December 2025
-#################################################
+# Date: December 2025 (Updated: January 2026 - Initial QC integration and visualisation)
+# ==============================================================================
 
 suppressPackageStartupMessages({
     library(data.table)
@@ -15,6 +19,7 @@ suppressPackageStartupMessages({
     library(yaml)
     library(logger)
     library(arrow)  # For parquet file support
+    library(gridExtra)  # For combining plots
 })
 
 # Source path utilities
@@ -70,6 +75,171 @@ matrix_to_dt <- function(mat) {
     dt[, SampleID := rownames(mat)]
     setcolorder(dt, c("SampleID", setdiff(names(dt), "SampleID")))
     return(dt)
+}
+
+# Function to create comprehensive outlier tracking visualisation
+# Similar to the plot generated in step 03, but includes all QC steps including initial QC
+create_comprehensive_outlier_tracking_plot <- function(all_samples) {
+    log_info("Creating comprehensive outlier tracking visualisation...")
+
+    # Ensure QC flag columns exist and are integers (handle NAs)
+    qc_cols <- c("QC_initial_qc", "QC_pca", "QC_sex_mismatch", "QC_sex_outlier",
+                 "QC_technical", "QC_zscore", "QC_pqtl")
+    qc_cols <- intersect(qc_cols, names(all_samples))
+
+    # Convert to integer, treating NA as 0
+    for (col in qc_cols) {
+        if (col %in% names(all_samples)) {
+            all_samples[, (col) := as.integer(fifelse(is.na(get(col)), 0L, get(col)))]
+        }
+    }
+
+    # 1. Outlier method overlap barplot (separate sex mismatch and sex outlier, include initial QC and pQTL)
+    # Safely get counts for each method (handle missing columns)
+    get_count <- function(col_name) {
+        if (col_name %in% names(all_samples)) {
+            sum(all_samples[[col_name]] == 1, na.rm = TRUE)
+        } else {
+            0L
+        }
+    }
+
+    method_counts <- data.table(
+        Method = c("Initial QC", "PCA", "Sex Mismatch", "Sex Outlier", "Technical", "Z-score", "pQTL"),
+        Count = c(
+            get_count("QC_initial_qc"),
+            get_count("QC_pca"),
+            get_count("QC_sex_mismatch"),
+            get_count("QC_sex_outlier"),
+            get_count("QC_technical"),
+            get_count("QC_zscore"),
+            get_count("QC_pqtl")
+        ),
+        Type = c("QC", "Primary", "Sex", "Sex", "Primary", "Primary", "Primary")
+    )
+
+    # Filter out methods with 0 counts for cleaner visualisation
+    method_counts <- method_counts[Count > 0]
+
+    p1 <- ggplot(method_counts, aes(x = reorder(Method, Count), y = Count, fill = Type)) +
+        geom_bar(stat = "identity") +
+        geom_text(aes(label = Count), hjust = -0.2, size = 4) +
+        scale_fill_manual(values = c("Primary" = "#3A5F8A", "Sex" = "#E74C3C", "QC" = "#F39C12")) +
+        coord_flip() +
+        labs(title = "Outliers Detected by Each Method",
+             subtitle = "All QC Steps Integration (Steps 00-05b)",
+             x = "Detection Method", y = "Number of Samples") +
+        theme_bw() +
+        theme(legend.position = "none",
+              plot.title = element_text(size = 14, face = "bold"),
+              plot.subtitle = element_text(size = 11))
+
+    # 2. Multi-method detection distribution
+    # CRITICAL: Ensure all QC columns exist before using them
+    # Create missing columns with default value 0
+    required_qc_cols <- c("QC_initial_qc", "QC_pca", "QC_sex_mismatch", "QC_sex_outlier",
+                         "QC_technical", "QC_zscore", "QC_pqtl")
+    for (col in required_qc_cols) {
+        if (!col %in% names(all_samples)) {
+            all_samples[, (col) := 0L]
+            log_warn("Column {col} not found - initialized to 0")
+        }
+    }
+
+    # Ensure N_Methods exists and handle NAs
+    if (!"N_Methods" %in% names(all_samples)) {
+        all_samples[, N_Methods := QC_initial_qc + QC_pca + QC_technical + QC_zscore +
+                                   QC_sex_mismatch + QC_sex_outlier + QC_pqtl]
+    }
+    all_samples[, N_Methods := as.integer(fifelse(is.na(N_Methods), 0L, N_Methods))]
+
+    # Ensure QC_flag exists
+    if (!"QC_flag" %in% names(all_samples)) {
+        all_samples[, QC_flag := as.integer(
+            QC_initial_qc == 1 | QC_pca == 1 | QC_technical == 1 | QC_zscore == 1 |
+            QC_sex_mismatch == 1 | QC_sex_outlier == 1 | QC_pqtl == 1
+        )]
+    }
+
+    n_methods_dist <- all_samples[QC_flag == 1, .N, by = N_Methods][order(N_Methods)]
+    if (nrow(n_methods_dist) == 0) {
+        # If no outliers, create empty plot
+        n_methods_dist <- data.table(N_Methods = 0L, N = 0L)
+    }
+
+    p2 <- ggplot(n_methods_dist, aes(x = factor(N_Methods), y = N, fill = factor(N_Methods))) +
+        geom_bar(stat = "identity") +
+        geom_text(aes(label = N), vjust = -0.5, size = 4) +
+        scale_fill_brewer(palette = "YlOrRd") +
+        labs(title = "Samples Flagged by Multiple Methods",
+             subtitle = "Higher counts = higher confidence outliers",
+             x = "Number of Methods Detecting Sample", y = "Number of Samples") +
+        theme_bw() +
+        theme(legend.position = "none",
+              plot.title = element_text(size = 14, face = "bold"),
+              plot.subtitle = element_text(size = 11))
+
+    # 3. Overlap patterns (Venn diagram style) - including all methods
+    # All QC columns should exist at this point (created/initialized above)
+    # Use direct column access - columns are guaranteed to exist after initialization
+    overlap_summary <- all_samples[, .(
+        InitialQC_only = sum(QC_initial_qc == 1 & QC_pca == 0 & QC_sex_mismatch == 0 &
+                            QC_sex_outlier == 0 & QC_technical == 0 & QC_zscore == 0 & QC_pqtl == 0, na.rm = TRUE),
+        PCA_only = sum(QC_initial_qc == 0 & QC_pca == 1 & QC_sex_mismatch == 0 &
+                      QC_sex_outlier == 0 & QC_technical == 0 & QC_zscore == 0 & QC_pqtl == 0, na.rm = TRUE),
+        SexMismatch_only = sum(QC_initial_qc == 0 & QC_pca == 0 & QC_sex_mismatch == 1 &
+                               QC_sex_outlier == 0 & QC_technical == 0 & QC_zscore == 0 & QC_pqtl == 0, na.rm = TRUE),
+        SexOutlier_only = sum(QC_initial_qc == 0 & QC_pca == 0 & QC_sex_mismatch == 0 &
+                             QC_sex_outlier == 1 & QC_technical == 0 & QC_zscore == 0 & QC_pqtl == 0, na.rm = TRUE),
+        Technical_only = sum(QC_initial_qc == 0 & QC_pca == 0 & QC_sex_mismatch == 0 &
+                           QC_sex_outlier == 0 & QC_technical == 1 & QC_zscore == 0 & QC_pqtl == 0, na.rm = TRUE),
+        Zscore_only = sum(QC_initial_qc == 0 & QC_pca == 0 & QC_sex_mismatch == 0 &
+                         QC_sex_outlier == 0 & QC_technical == 0 & QC_zscore == 1 & QC_pqtl == 0, na.rm = TRUE),
+        pQTL_only = sum(QC_initial_qc == 0 & QC_pca == 0 & QC_sex_mismatch == 0 &
+                       QC_sex_outlier == 0 & QC_technical == 0 & QC_zscore == 0 & QC_pqtl == 1, na.rm = TRUE),
+        Two_Methods = sum(N_Methods == 2, na.rm = TRUE),
+        Three_Methods = sum(N_Methods == 3, na.rm = TRUE),
+        Four_Plus_Methods = sum(N_Methods >= 4, na.rm = TRUE)
+    )]
+
+    overlap_long <- data.table(
+        Category = names(overlap_summary),
+        Count = as.numeric(overlap_summary[1,])
+    )
+    overlap_long <- overlap_long[Count > 0]
+
+    if (nrow(overlap_long) > 0) {
+        p3 <- ggplot(overlap_long, aes(x = reorder(Category, Count), y = Count)) +
+            geom_bar(stat = "identity", fill = "#5C9EAD") +
+            geom_text(aes(label = Count), hjust = -0.2, size = 3.5) +
+            coord_flip() +
+            labs(title = "Outlier Detection Overlap Patterns",
+                 x = "Overlap Category", y = "Number of Samples") +
+            theme_bw() +
+            theme(plot.title = element_text(size = 14, face = "bold"),
+                  axis.text.y = element_text(size = 8))
+    } else {
+        # Create empty plot if no overlaps
+        p3 <- ggplot(data.frame(x = 1, y = 1), aes(x = x, y = y)) +
+            geom_blank() +
+            labs(title = "Outlier Detection Overlap Patterns",
+                 subtitle = "No overlap patterns detected",
+                 x = "Overlap Category", y = "Number of Samples") +
+            theme_bw() +
+            theme(plot.title = element_text(size = 14, face = "bold"))
+    }
+
+    # Combine plots
+    combined <- grid.arrange(p1, p2, p3, ncol = 2, nrow = 2)
+
+    log_info("Comprehensive outlier tracking visualisation created")
+
+    return(list(
+        method_counts = p1,
+        n_methods_dist = p2,
+        overlap_patterns = p3,
+        combined = combined
+    ))
 }
 
 # Main function
@@ -130,9 +300,21 @@ main <- function() {
         log_warn("Excluded samples file not found: {excluded_samples_path}. AG samples may not be filtered correctly.")
     }
 
-    # Note: AG samples are already removed in pre-filtered input, so no initial QC failures to track
-    step00_failures <- character(0)
-    log_info("step 00: No initial QC failures (AG samples already removed in pre-filtered input)")
+    # step 00: Initial QC failures (samples with >10% missing data)
+    # Load from QC summary file created in Step 00
+    qc_summary_path <- get_output_path("00", "qc_summary", batch_id, "qc", "tsv", config = config)
+    if (file.exists(qc_summary_path)) {
+        log_info("Loading step 00 initial QC failures from QC summary...")
+        qc_summary <- fread(qc_summary_path)
+        step00_failures <- qc_summary[QC_initial_qc == 1]$SampleID
+        log_info("  Found {length(step00_failures)} samples failing initial QC (>10% missing data)")
+        if(length(step00_failures) > 0) {
+            log_info("  Failed samples: {paste(step00_failures, collapse=', ')}")
+        }
+    } else {
+        step00_failures <- character(0)
+        log_warn("step 00 QC summary not found - assuming no initial QC failures")
+    }
 
     # step 01: PCA outliers
     pca_path <- get_output_path("01", "pca_outliers_by_source", batch_id, "outliers", "tsv", config = config)
@@ -306,10 +488,78 @@ main <- function() {
         log_info("Sample count verified: {n_samples_in_tracking} samples in tracking table matches NPX matrix")
     }
 
-    # 3.2: Note: No step 00 failures (AG samples already removed in pre-filtered input)
+    # 3.2: Add initial QC failures to tracking table (even if not in analysis-ready matrix)
+    # CRITICAL FIX: Initial QC failures are removed from matrix before tracking table is created,
+    # so we must add them explicitly to ensure all evaluated samples are tracked
+    if (length(step00_failures) > 0) {
+        log_info("Adding {length(step00_failures)} initial QC failures to tracking table (not in analysis-ready matrix)")
+
+        # Check which initial QC failures are already in tracking table
+        missing_from_tracking <- setdiff(step00_failures, all_samples$SampleID)
+
+        if (length(missing_from_tracking) > 0) {
+            log_info("  Adding {length(missing_from_tracking)} initial QC failures to tracking table")
+
+            # Create data.table for missing initial QC failures
+            # Load QC summary to get metadata for these samples (qc_summary from Phase 2 may not be in scope)
+            qc_summary_path <- get_output_path("00", "qc_summary", batch_id, "qc", "tsv", config = config)
+            if (file.exists(qc_summary_path)) {
+                qc_summary_all <- fread(qc_summary_path)
+                initial_qc_rows <- qc_summary_all[SampleID %in% missing_from_tracking]
+
+                # Create minimal tracking table rows for initial QC failures
+                initial_qc_tracking <- data.table(
+                    SampleID = missing_from_tracking,
+                    FINNGENID = NA_character_,
+                    COHORT_FINNGENID = NA_character_,
+                    BIOBANK_PLASMA = NA_character_,
+                    sample_type = NA_character_,
+                    DISEASE_GROUP = NA_character_
+                )
+
+                # Try to get FINNGENID from sample mapping if available
+                if (nrow(sample_mapping) > 0 && "FINNGENID" %in% names(sample_mapping)) {
+                    mapping_subset <- sample_mapping[SampleID %in% missing_from_tracking,
+                                                     .(SampleID, FINNGENID, COHORT_FINNGENID, BIOBANK_PLASMA, sample_type)]
+                    if (nrow(mapping_subset) > 0) {
+                        initial_qc_tracking <- merge(initial_qc_tracking, mapping_subset,
+                                                     by = "SampleID", all.x = TRUE, suffixes = c("", "_map"))
+                        # Use mapping values where available
+                        if ("FINNGENID_map" %in% names(initial_qc_tracking)) {
+                            initial_qc_tracking[!is.na(FINNGENID_map), FINNGENID := FINNGENID_map]
+                            initial_qc_tracking[, FINNGENID_map := NULL]
+                        }
+                        if ("COHORT_FINNGENID_map" %in% names(initial_qc_tracking)) {
+                            initial_qc_tracking[!is.na(COHORT_FINNGENID_map), COHORT_FINNGENID := COHORT_FINNGENID_map]
+                            initial_qc_tracking[, COHORT_FINNGENID_map := NULL]
+                        }
+                        if ("BIOBANK_PLASMA_map" %in% names(initial_qc_tracking)) {
+                            initial_qc_tracking[!is.na(BIOBANK_PLASMA_map), BIOBANK_PLASMA := BIOBANK_PLASMA_map]
+                            initial_qc_tracking[, BIOBANK_PLASMA_map := NULL]
+                        }
+                        if ("sample_type_map" %in% names(initial_qc_tracking)) {
+                            initial_qc_tracking[!is.na(sample_type_map), sample_type := sample_type_map]
+                            initial_qc_tracking[, sample_type_map := NULL]
+                        }
+                    }
+                }
+
+                # Add to tracking table
+                all_samples <- rbindlist(list(all_samples, initial_qc_tracking), fill = TRUE)
+                log_info("  Added {length(missing_from_tracking)} initial QC failures to tracking table")
+                log_info("  Tracking table now has {nrow(all_samples)} samples (includes {length(missing_from_tracking)} initial QC failures)")
+            } else {
+                log_warn("  QC summary file not found - cannot add initial QC failures with metadata")
+            }
+        } else {
+            log_info("  All initial QC failures already in tracking table")
+        }
+    }
 
     # 3.3: Create binary QC flag columns
     log_info("Creating QC flag columns for each step...")
+    # CRITICAL FIX: Include initial QC flag (from step00_failures loaded earlier)
+    all_samples[, QC_initial_qc := as.integer(SampleID %in% step00_failures)]
     all_samples[, QC_pca := as.integer(SampleID %in% step01_outliers)]
     all_samples[, QC_technical := as.integer(SampleID %in% step02_outliers)]
     all_samples[, QC_zscore := as.integer(SampleID %in% step03_outliers)]
@@ -320,19 +570,20 @@ main <- function() {
     # 3.4: Create summary columns
     log_info("Creating summary columns (QC_flag, N_Methods, Detection_Steps)...")
 
-    # QC_flag: 1 if flagged by ANY step
+    # QC_flag: 1 if flagged by ANY step (including initial QC)
     all_samples[, QC_flag := as.integer(
-        QC_pca == 1 | QC_technical == 1 | QC_zscore == 1 |
+        QC_initial_qc == 1 | QC_pca == 1 | QC_technical == 1 | QC_zscore == 1 |
         QC_sex_mismatch == 1 | QC_sex_outlier == 1 | QC_pqtl == 1
     )]
 
-    # N_Methods: Count of flagging methods
-    all_samples[, N_Methods := QC_pca + QC_technical + QC_zscore +
+    # N_Methods: Count of flagging methods (including initial QC)
+    all_samples[, N_Methods := QC_initial_qc + QC_pca + QC_technical + QC_zscore +
                                QC_sex_mismatch + QC_sex_outlier + QC_pqtl]
 
-    # Detection_Steps: Comma-separated list
+    # Detection_Steps: Comma-separated list (including initial QC)
     all_samples[, Detection_Steps := {
         steps <- character(0)
+        if (QC_initial_qc == 1) steps <- c(steps, "InitialQC")
         if (QC_pca == 1) steps <- c(steps, "PCA")
         if (QC_technical == 1) steps <- c(steps, "Technical")
         if (QC_zscore == 1) steps <- c(steps, "Zscore")
@@ -353,18 +604,24 @@ main <- function() {
     log_info("PHASE 3.5: LOADING RAW QC METRICS FROM ALL STEPS")
     log_info("=" |> rep(70) |> paste(collapse = ""))
 
-    # step 00: Missing rate (if available)
-    # Note: Step 00 may not output a QC summary file, so this is optional
+    # step 00: Initial QC metrics (missing_rate and QC_initial_qc flag)
+    # Load from QC summary file created in Step 00
+    # CRITICAL: QC_initial_qc flag was already created in Phase 3.3 (line 546)
+    # This merge only adds missing_rate metric - preserve existing QC_initial_qc flag
     qc_summary_path <- get_output_path("00", "qc_summary", batch_id, "qc", "tsv", config = config)
     if (file.exists(qc_summary_path)) {
-        log_info("Loading step 00 metrics (missing_rate)...")
+        log_info("Loading step 00 metrics (missing_rate, QC_initial_qc)...")
         qc_summary <- fread(qc_summary_path)
-        step00_metrics <- qc_summary[, .(SampleID, QC_initial_qc_missing_rate = missing_rate)]
+        step00_metrics <- qc_summary[, .(SampleID,
+                                         QC_initial_qc_missing_rate = missing_rate)]
+        # Only merge missing_rate - QC_initial_qc flag already exists from Phase 3.3
         all_samples <- merge(all_samples, step00_metrics, by = "SampleID", all.x = TRUE)
-        log_info("  Merged missing_rate for {sum(!is.na(all_samples$QC_initial_qc_missing_rate))} samples")
+        log_info("  Merged initial QC metrics for {sum(!is.na(all_samples$QC_initial_qc_missing_rate))} samples")
+        log_info("  Samples flagged by initial QC: {sum(all_samples$QC_initial_qc == 1, na.rm = TRUE)}")
     } else {
-        log_warn("step 00 QC summary not found - skipping missing_rate metrics")
+        log_warn("step 00 QC summary not found - skipping initial QC metrics")
         all_samples[, QC_initial_qc_missing_rate := NA_real_]
+        # QC_initial_qc flag already exists from Phase 3.3 - don't overwrite
     }
 
     # step 01: PCA scores (PC1-PC4 for all samples)
@@ -520,6 +777,40 @@ main <- function() {
     log_info("Raw QC metrics loading complete")
 
     # ========================================================================
+    # PHASE 3.6: GENERATE OUTLIER TRACKING VISUALISATION
+    # ========================================================================
+
+    log_info("")
+    log_info("=" |> rep(70) |> paste(collapse = ""))
+    log_info("PHASE 3.6: GENERATING OUTLIER TRACKING VISUALISATION")
+    log_info("=" |> rep(70) |> paste(collapse = ""))
+
+    # Create comprehensive outlier tracking plot (similar to step 03)
+    outlier_tracking_plots <- create_comprehensive_outlier_tracking_plot(all_samples)
+
+    # Save individual plots
+    method_counts_path <- get_output_path(step_num, "outlier_method_counts", batch_id, "outliers", "pdf", config = config)
+    n_methods_dist_path <- get_output_path(step_num, "outlier_multi_method_dist", batch_id, "outliers", "pdf", config = config)
+    overlap_patterns_path <- get_output_path(step_num, "outlier_overlap_patterns", batch_id, "outliers", "pdf", config = config)
+    tracking_combined_path <- get_output_path(step_num, "outlier_tracking_combined", batch_id, "outliers", "pdf", config = config)
+
+    ensure_output_dir(method_counts_path)
+    ensure_output_dir(n_methods_dist_path)
+    ensure_output_dir(overlap_patterns_path)
+    ensure_output_dir(tracking_combined_path)
+
+    ggsave(method_counts_path, outlier_tracking_plots$method_counts, width = 8, height = 6)
+    ggsave(n_methods_dist_path, outlier_tracking_plots$n_methods_dist, width = 8, height = 6)
+    ggsave(overlap_patterns_path, outlier_tracking_plots$overlap_patterns, width = 10, height = 6)
+    ggsave(tracking_combined_path, outlier_tracking_plots$combined, width = 14, height = 10)
+
+    log_info("Saved comprehensive outlier tracking visualisations:")
+    log_info("  Method counts: {method_counts_path}")
+    log_info("  Multi-method distribution: {n_methods_dist_path}")
+    log_info("  Overlap patterns: {overlap_patterns_path}")
+    log_info("  Combined plot: {tracking_combined_path}")
+
+    # ========================================================================
     # PHASE 4: GENERATE OUTPUTS
     # ========================================================================
 
@@ -533,10 +824,12 @@ main <- function() {
 
     outlier_list <- all_samples[QC_flag == 1]
 
-    # Note: No step 00 failures (AG samples already removed in pre-filtered input)
+    # Note: Initial QC failures are now included in tracking table and comprehensive list
 
     # Reorder columns: base columns, then each QC flag followed by its metrics
     col_order <- c("SampleID", "FINNGENID", "BIOBANK_PLASMA", "DISEASE_GROUP",
+                   # step 00: Initial QC
+                   "QC_initial_qc", "QC_initial_qc_missing_rate",
                    # step 01: PCA
                    "QC_pca", "QC_pca_pc1", "QC_pca_pc2", "QC_pca_pc3", "QC_pca_pc4",
                    # step 02: Technical
@@ -598,6 +891,7 @@ main <- function() {
     }
 
     # Fill NAs with 0 for binary flags (samples not flagged)
+    # Note: QC_initial_qc is already set in tracking table creation, but ensure it's included
     binary_qc_cols <- c("QC_initial_qc", "QC_pca", "QC_sex_mismatch", "QC_sex_outlier",
                         "QC_technical", "QC_zscore", "QC_pqtl", "QC_flag")
     binary_qc_cols <- intersect(binary_qc_cols, names(annotated_metadata))
@@ -642,12 +936,16 @@ main <- function() {
     log_info("  Total samples: {nrow(annotated_metadata)}")
     log_info("  Samples with QC flags: {sum(annotated_metadata$QC_flag == 1, na.rm = TRUE)}")
 
-    # Verify sample count matches NPX matrix (should be 2,527: 2,477 FinnGen + 50 bridging)
-    expected_total_samples <- 2527
+    # Verify sample count matches expected (2,527 original - 5 initial QC = 2,522 in matrix + 5 initial QC in tracking = 2,527 total tracked)
+    # OR: 2,522 in analysis-ready matrix + 5 initial QC failures = 2,527 total tracked
+    expected_total_samples <- 2527  # Original input samples
+    expected_in_matrix <- 2522  # After initial QC removal
     if (nrow(annotated_metadata) == expected_total_samples) {
-        log_info("  ✓ Sample count verified: {nrow(annotated_metadata)} samples (matches NPX matrix)")
+        log_info("  ✓ Sample count verified: {nrow(annotated_metadata)} samples (includes {length(step00_failures)} initial QC failures)")
+    } else if (nrow(annotated_metadata) == expected_in_matrix) {
+        log_warn("  Sample count: {nrow(annotated_metadata)} samples (missing {length(step00_failures)} initial QC failures in tracking)")
     } else {
-        log_warn("  Sample count mismatch: {nrow(annotated_metadata)} samples, expected {expected_total_samples}")
+        log_warn("  Sample count mismatch: {nrow(annotated_metadata)} samples, expected {expected_total_samples} (or {expected_in_matrix} if initial QC not tracked)")
     }
 
     # Count bridging samples
@@ -662,12 +960,23 @@ main <- function() {
     log_info("")
     log_info("Generating Output 3: Clean NPX Matrix...")
 
-    # Get list of all flagged samples
+    # Get list of all flagged samples (includes initial QC failures even if not in base matrix)
     flagged_samples <- all_samples[QC_flag == 1]$SampleID
+    log_info("  Total flagged samples: {length(flagged_samples)} (includes initial QC failures)")
 
     # Remove flagged samples from base NPX matrix
+    # Note: Initial QC failures are already removed from base_npx_matrix, so they won't be in it
+    # This is correct - we just need to track them for reporting purposes
     clean_samples <- setdiff(rownames(base_npx_matrix), flagged_samples)
     clean_npx_matrix <- base_npx_matrix[clean_samples, ]
+
+    # Verify: Initial QC failures should not be in base matrix (they were removed in Step 00)
+    initial_qc_in_base <- intersect(step00_failures, rownames(base_npx_matrix))
+    if (length(initial_qc_in_base) > 0) {
+        log_warn("  WARNING: {length(initial_qc_in_base)} initial QC failures found in base matrix (should be 0)")
+    } else {
+        log_info("  ✓ Verified: Initial QC failures already removed from base matrix (not present)")
+    }
 
     # Save using path_utils naming convention
     # Output 3a: Clean NPX Matrix with all proteins (including control probes)
@@ -764,6 +1073,7 @@ main <- function() {
     log_info("Batch: {batch_id}")
     log_info("Total samples tracked: {nrow(all_samples)}")
     log_info("  Note: Blank/control samples (20) were removed in step 00 and are not tracked here")
+    log_info("  Note: Initial QC failures ({length(step00_failures)} samples) are included in tracking table for comprehensive reporting")
     log_info("")
 
     # Unique samples flagged

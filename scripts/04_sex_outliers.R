@@ -1,12 +1,17 @@
 #!/usr/bin/env Rscript
-
-#################################################
-# Script: 04_sex_outliers.R
+# ==============================================================================
+# 04_sex_outliers.R - Sex Mismatch and Outlier Detection
+# ==============================================================================
+#
+# Purpose:
+#   Detects sex mismatches and outliers using nested cross-validation elastic-net
+#   model for sex prediction. Compares predicted sex (from protein expression)
+#   with genetic sex to identify strict mismatches and threshold-based outliers.
+#   Uses PCA-cleaned matrix to ensure robust model training on high-quality samples.
+#
 # Author: Reza Jabal, PhD (rjabal@broadinstitute.org)
-# Description: Sex mismatch detection using protein expression and genetic data
-#              Refactored version
 # Date: December 2025
-#################################################
+# ==============================================================================
 
 suppressPackageStartupMessages({
   library(data.table)

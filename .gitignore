@@ -71,7 +71,15 @@ NORMALIZATION_*.md
 REFACTORING_SUMMARY.md
 REMEDY_PLAN.md
 MATRIX_FLOW_ANALYSIS.md
-COMMIT_MESSAGE.txt
+COMMIT_MESSAGE*.txt
+INITIAL_QC_ANALYSIS.md
+REFACTORING_PROPOSAL_ANALYSIS.md
+
+# Test and development scripts
+run_pipeline_from_step*.sh
+run_pipeline_end_to_end.sh
+run_test_*.sh
+*_test.sh
 
 # OS files
 Thumbs.db

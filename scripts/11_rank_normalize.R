@@ -1,13 +1,17 @@
 #!/usr/bin/env Rscript
-
-#################################################
-# Script: 11_rank_normalize.R
+# ==============================================================================
+# 11_rank_normalize.R - Inverse Rank Normalisation
+# ==============================================================================
+#
+# Purpose:
+#   Applies inverse rank normalisation (IRN) to the cleaned NPX matrix column-wise
+#   (per protein). Transforms data to a normal distribution suitable for downstream
+#   statistical analysis. Generates PLINK format phenotype files and distribution
+#   visualisations comparing before and after normalisation.
+#
 # Author: Reza Jabal, PhD (rjabal@broadinstitute.org)
-# Description: Apply inverse rank normalization to cleaned NPX matrix
-#              Refactored version
-#              Refactored version
-# Date: December 2025
-#################################################
+# Date: December 2025 (Updated: January 2026 - Fixed file path issues)
+# ==============================================================================
 
 suppressPackageStartupMessages({
   library(data.table)
@@ -20,24 +24,52 @@ suppressPackageStartupMessages({
 # Suppress linting warnings
 utils::globalVariables(c("theoretical"))
 
-# Set up logging
-log_appender(appender_file())
-log_info("Starting rank normalization")
+# Source path utilities for batch-aware paths
+script_dir <- tryCatch({
+  env_script <- Sys.getenv("SCRIPT_NAME", "")
+  if (env_script != "" && file.exists(env_script)) {
+    dirname(normalizePath(env_script))
+  } else {
+    args <- commandArgs(trailingOnly = FALSE)
+    file_arg <- grep("^--file=", args, value = TRUE)
+    if (length(file_arg) > 0) {
+      script_path <- sub("^--file=", "", file_arg)
+      dirname(normalizePath(script_path))
+    } else {
+      getwd()
+    }
+  }
+}, error = function(e) getwd())
+source(file.path(script_dir, "path_utils.R"))
 
-# Load configuration
-config <- read_yaml("")
+# Load configuration first
+config_file <- Sys.getenv("PIPELINE_CONFIG", "")
+if (config_file == "" || !file.exists(config_file)) {
+  stop("PIPELINE_CONFIG environment variable not set or config file not found. Please provide path to config file.")
+}
+config <- read_yaml(config_file)
+
+# Get batch context
+batch_id <- Sys.getenv("PIPELINE_BATCH_ID", config$batch$default_batch_id %||% "batch_01")
+step_num <- get_step_number()
+
+# Set up logging with batch-aware path
+log_path <- get_log_path(step_num, batch_id, config = config)
+ensure_output_dir(log_path)
+log_appender(appender_file(log_path))
+log_info("Starting rank normalisation for batch: {batch_id}")
 
 # Set theme for plots
 theme_set(theme_bw())
 
-# Function for inverse rank normalization
+# Function for inverse rank normalisation
 inverse_rank_normalize <- function(x) {
   # Remove NA values
   x_clean <- x[!is.na(x)]
   n <- length(x_clean)
 
   if(n < 3) {
-    # Too few values to normalize
+    # Too few values to normalise
     return(x)
   }
 
@@ -57,12 +89,12 @@ inverse_rank_normalize <- function(x) {
   return(result)
 }
 
-# Function to apply rank normalization to matrix
+# Function to apply rank normalisation to matrix
 rank_normalize_matrix <- function(phenotype_matrix, by = "column") {
-  log_info("Applying inverse rank normalization by {by}")
+  log_info("Applying inverse rank normalisation by {by}")
 
   if(by == "column") {
-    # Normalize each protein separately (column-wise)
+    # Normalise each protein separately (column-wise)
     # Use sapply with simplify=FALSE then combine to preserve matrix structure
     normalized_list <- lapply(seq_len(ncol(phenotype_matrix)), function(i) {
       inverse_rank_normalize(phenotype_matrix[, i])
@@ -70,7 +102,7 @@ rank_normalize_matrix <- function(phenotype_matrix, by = "column") {
     normalized_matrix <- do.call(cbind, normalized_list)
 
   } else if(by == "row") {
-    # Normalize each sample separately (row-wise)
+    # Normalise each sample separately (row-wise)
     normalized_list <- lapply(seq_len(nrow(phenotype_matrix)), function(i) {
       inverse_rank_normalize(phenotype_matrix[i, ])
     })
@@ -87,9 +119,9 @@ rank_normalize_matrix <- function(phenotype_matrix, by = "column") {
   return(normalized_matrix)
 }
 
-# Function to residualize after rank normalization
+# Function to residualise after rank normalisation
 residualize_covariates <- function(normalized_matrix, covariates) {
-  log_info("Residualizing for covariates after rank normalization")
+  log_info("Residualising for covariates after rank normalisation")
 
   # This would typically be done in the GWAS software
   # Here we provide the option for pre-residualization if needed
@@ -114,7 +146,7 @@ residualize_covariates <- function(normalized_matrix, covariates) {
       model <- lm(y ~ ., data = fit_data)
       residuals <- residuals(model)
 
-      # Rank normalize the residuals
+      # Rank normalise the residuals
       residuals_normalized <- inverse_rank_normalize(residuals)
 
       residualized_matrix[complete_idx, i] <- residuals_normalized
@@ -129,7 +161,7 @@ residualize_covariates <- function(normalized_matrix, covariates) {
 
 # Function to compare distributions
 compare_distributions <- function(original_matrix, normalized_matrix) {
-  log_info("Comparing distributions before and after normalization")
+  log_info("Comparing distributions before and after normalisation")
 
   # Sample proteins for comparison
   set.seed(123)
@@ -144,7 +176,7 @@ compare_distributions <- function(original_matrix, normalized_matrix) {
     orig_values <- original_matrix[, i]
     orig_values <- orig_values[!is.na(orig_values)]
 
-    # Normalized distribution stats
+    # Normalised distribution stats
     norm_values <- normalized_matrix[, i]
     norm_values <- norm_values[!is.na(norm_values)]
 
@@ -179,7 +211,7 @@ compare_distributions <- function(original_matrix, normalized_matrix) {
 
 # Function to create distribution plots
 create_distribution_plots <- function(original_matrix, normalized_matrix) {
-  log_info("Creating distribution visualization plots")
+  log_info("Creating distribution visualisation plots")
 
   # Sample proteins for plotting
   set.seed(123)
@@ -204,7 +236,7 @@ create_distribution_plots <- function(original_matrix, normalized_matrix) {
     p <- ggplot(plot_data_long[!is.na(expression)], aes(x = expression, fill = stage)) +
       geom_histogram(aes(y = after_stat(density)), bins = 30, alpha = 0.6, position = "identity") +
       geom_density(alpha = 0.3) +
-      scale_fill_manual(values = c("original" = "#FF6B6B", "normalized" = "#3A5F8A"),
+      scale_fill_manual(values = c("original" = "#FF6B6B", "normalised" = "#3A5F8A"),
                        labels = c("Original", "Rank Normalized")) +
       labs(title = paste("Protein:", substr(protein_name, 1, 20)),
            x = "Expression", y = "Density",
@@ -238,7 +270,7 @@ create_distribution_plots <- function(original_matrix, normalized_matrix) {
   qq_plot <- ggplot(qq_data, aes(x = theoretical, y = sample)) +
     geom_point(alpha = 0.5, color = "#3A5F8A") +
     geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
-    labs(title = "Q-Q Plot After Rank Normalization",
+    labs(title = "Q-Q Plot After Rank Normalisation",
          x = "Theoretical Quantiles",
          y = "Sample Quantiles") +
     theme_bw()
@@ -263,30 +295,27 @@ main <- function() {
     error = function(e) FALSE
   )
 
-  # Determine input/output prefix based on aggregation mode
-  if (aggregate_output) {
-    input_prefix <- "batch2_"
-    output_prefix <- "batch2_"
-    log_info("Aggregation mode: Using batch 2 inputs/outputs with 'batch2_' prefix")
-  } else {
-    input_prefix <- "12_"
-    output_prefix <- "13_"
-    log_info("Single-batch mode: Using standard '12_'/'13_' prefixes")
+  # Load data from previous steps using batch-aware paths
+  log_info("Loading data from previous steps")
+  phenotype_unrelated_path <- get_output_path("10", "phenotype_matrix_unrelated", batch_id, "phenotypes", config = config)
+  finngenid_unrelated_path <- get_output_path("10", "phenotype_matrix_finngenid_unrelated", batch_id, "phenotypes", config = config)
+
+  if (!file.exists(phenotype_unrelated_path)) {
+    stop("Unrelated phenotype matrix not found: {phenotype_unrelated_path}. Please run step 10 first.")
   }
 
-  # Load data from previous steps
-  log_info("Loading data from previous steps")
-  phenotype_unrelated <- readRDS(paste0(, input_prefix, "phenotype_matrix_unrelated.rds"))
+  phenotype_unrelated <- readRDS(phenotype_unrelated_path)
+  log_info("Loaded unrelated phenotype matrix: {nrow(phenotype_unrelated)} samples x {ncol(phenotype_unrelated)} proteins")
 
   finngenid_unrelated <- NULL
-  finngenid_file <- paste0(, input_prefix, "phenotype_matrix_finngenid_unrelated.rds")
-  if(file.exists(finngenid_file)) {
-    finngenid_unrelated <- readRDS(finngenid_file)
+  if(file.exists(finngenid_unrelated_path)) {
+    finngenid_unrelated <- readRDS(finngenid_unrelated_path)
+    log_info("Loaded unrelated FINNGENID-indexed matrix: {nrow(finngenid_unrelated)} samples")
   }
 
   # Check if sample_id matrix is empty (can happen if filtering used FINNGENIDs)
   if(nrow(phenotype_unrelated) == 0 && !is.null(finngenid_unrelated) && nrow(finngenid_unrelated) > 0) {
-    log_warn("Sample ID matrix is empty, using FINNGENID matrix for rank normalization")
+    log_warn("Sample ID matrix is empty, using FINNGENID matrix for rank normalisation")
     phenotype_unrelated <- finngenid_unrelated
     use_finngenid_as_primary <- TRUE
   } else {
@@ -294,11 +323,11 @@ main <- function() {
   }
 
   if(nrow(phenotype_unrelated) == 0) {
-    log_error("Both phenotype matrices are empty. Cannot proceed with rank normalization.")
-    stop("No samples available for rank normalization")
+    log_error("Both phenotype matrices are empty. Cannot proceed with rank normalisation.")
+    stop("No samples available for rank normalisation")
   }
 
-  # Apply rank normalization
+  # Apply rank normalisation
   phenotype_rint <- rank_normalize_matrix(phenotype_unrelated, by = "column")
 
   if(!is.null(finngenid_unrelated) && !use_finngenid_as_primary) {
@@ -349,15 +378,18 @@ main <- function() {
     index = seq_len(ncol(phenotype_rint))
   )
 
-  # Save outputs
-  log_info("Saving rank normalized phenotypes")
+  # Save outputs using batch-aware paths
+  log_info("Saving rank normalised phenotypes")
 
   # Save matrices
-  saveRDS(phenotype_rint,
-          paste0(, output_prefix, "phenotype_matrix_rint.rds"))
+  phenotype_rint_path <- get_output_path(step_num, "phenotype_matrix_rint", batch_id, "phenotypes", config = config)
+  ensure_output_dir(phenotype_rint_path)
+  saveRDS(phenotype_rint, phenotype_rint_path)
+
   if(!is.null(finngenid_rint)) {
-    saveRDS(finngenid_rint,
-            paste0(, output_prefix, "phenotype_matrix_finngenid_rint.rds"))
+    finngenid_rint_path <- get_output_path(step_num, "phenotype_matrix_finngenid_rint", batch_id, "phenotypes", config = config)
+    ensure_output_dir(finngenid_rint_path)
+    saveRDS(finngenid_rint, finngenid_rint_path)
   }
 
   # Save PLINK format
@@ -366,24 +398,25 @@ main <- function() {
   } else {
     "13_Olink5k_batch2_unrel_rint.pheno"
   }
-  fwrite(plink_format,
-         paste0(, output_prefix, plink_filename),
-         sep = "\t", na = "-9", quote = FALSE)
+  plink_path <- get_output_path(step_num, plink_filename, batch_id, "phenotypes", "pheno", config = config)
+  ensure_output_dir(plink_path)
+  fwrite(plink_format, plink_path, sep = "\t", na = "-9", quote = FALSE)
 
   # Save protein list
-  fwrite(protein_list,
-         paste0(, output_prefix, "proteins_all.txt"),
-         sep = "\t", col.names = FALSE, quote = FALSE)
+  protein_list_path <- get_output_path(step_num, "proteins_all", batch_id, "phenotypes", "txt", config = config)
+  ensure_output_dir(protein_list_path)
+  fwrite(protein_list, protein_list_path, sep = "\t", col.names = FALSE, quote = FALSE)
 
   # Save comparison statistics
-  fwrite(comparison_stats,
-         paste0(, output_prefix, "rank_norm_comparison.tsv"),
-         sep = "\t")
+  comparison_stats_path <- get_output_path(step_num, "rank_norm_comparison", batch_id, "phenotypes", "tsv", config = config)
+  ensure_output_dir(comparison_stats_path)
+  fwrite(comparison_stats, comparison_stats_path, sep = "\t")
 
   # Save plots
   if(length(distribution_plots$distribution_plots) >= 4) {
-    pdf(paste0(, output_prefix, "rank_norm_distributions.pdf"),
-        width = 12, height = 10)
+    distributions_path <- get_output_path(step_num, "rank_norm_distributions", batch_id, "phenotypes", "pdf", config = config)
+    ensure_output_dir(distributions_path)
+    pdf(distributions_path, width = 12, height = 10)
     gridExtra::grid.arrange(
       distribution_plots$distribution_plots[[1]],
       distribution_plots$distribution_plots[[2]],
@@ -394,8 +427,9 @@ main <- function() {
     dev.off()
   }
 
-  ggsave(paste0(, output_prefix, "rank_norm_qq_plot.pdf"),
-         distribution_plots$qq_plot, width = 8, height = 8)
+  qq_plot_path <- get_output_path(step_num, "rank_norm_qq_plot", batch_id, "phenotypes", "pdf", config = config)
+  ensure_output_dir(qq_plot_path)
+  ggsave(qq_plot_path, distribution_plots$qq_plot, width = 8, height = 8)
 
   # Create summary
   summary_stats <- data.table(
@@ -423,24 +457,25 @@ main <- function() {
     )
   )
 
-  fwrite(summary_stats,
-         paste0(, output_prefix, "rank_norm_summary.tsv"),
-         sep = "\t")
+  summary_stats_path <- get_output_path(step_num, "rank_norm_summary", batch_id, "phenotypes", "tsv", config = config)
+  ensure_output_dir(summary_stats_path)
+  fwrite(summary_stats, summary_stats_path, sep = "\t")
 
   # Handle aggregation if enabled
   if (aggregate_output && multi_batch_mode && !is.null(finngenid_rint)) {
-    log_info("Aggregation enabled: Attempting to rank-normalize batch 1 and create aggregate output")
+    log_info("Aggregation enabled: Attempting to rank-normalise batch 1 and create aggregate output")
 
     # Check if batch 1 processed data exists
-    batch1_file <- 
+    other_batch_id <- if (batch_id == "batch_02") "batch_01" else "batch_02"
+    batch1_file <- get_output_path("10", "phenotype_matrix_finngenid_unrelated", other_batch_id, "phenotypes", config = config)
 
     if (file.exists(batch1_file)) {
-      log_info("Found batch 1 kinship-filtered data: Creating aggregate rank-normalized output")
+      log_info("Found batch 1 kinship-filtered data: Creating aggregate rank-normalised output")
 
       # Load batch 1 data
       batch1_unrelated <- readRDS(batch1_file)
 
-      # Rank normalize batch 1
+      # Rank normalise batch 1
       batch1_rint <- rank_normalize_matrix(batch1_unrelated, by = "column")
 
       # Combine batch 1 and batch 2 (on FINNGENID, common proteins)
@@ -458,7 +493,7 @@ main <- function() {
 
         # Combine
         aggregate_rint <- rbind(batch1_subset, batch2_subset)
-        log_info("Aggregate rank-normalized matrix: {nrow(aggregate_rint)} samples x {ncol(aggregate_rint)} proteins")
+        log_info("Aggregate rank-normalised matrix: {nrow(aggregate_rint)} samples x {ncol(aggregate_rint)} proteins")
 
         # Format for PLINK
         aggregate_plink <- data.table(
@@ -471,7 +506,7 @@ main <- function() {
         }
 
         # Save aggregate outputs
-        log_info("Saving aggregate rank-normalized outputs with 'aggregate_' prefix")
+        log_info("Saving aggregate rank-normalised outputs with 'aggregate_' prefix")
         saveRDS(aggregate_rint,
                 )
         fwrite(aggregate_plink,
@@ -490,7 +525,7 @@ main <- function() {
   }
 
   # Print summary
-  cat("\n=== RANK NORMALIZATION SUMMARY ===\n")
+  cat("\n=== RANK NORMALISATION SUMMARY ===\n")
   cat("Phenotype matrix:", nrow(phenotype_rint), "samples x", ncol(phenotype_rint), "proteins\n")
   cat("Missing values:", sum(is.na(phenotype_rint)),
       "(", round(sum(is.na(phenotype_rint)) / length(phenotype_rint) * 100, 2), "%)\n")
@@ -505,7 +540,7 @@ main <- function() {
   cat("  - R matrices: 13_phenotype_matrix_rint.rds\n")
   cat("\nResults saved to: ../output/phenotypes/\n")
 
-  log_info("Rank normalization completed")
+  log_info("Rank normalisation completed")
 
   return(list(
     phenotype_rint = phenotype_rint,

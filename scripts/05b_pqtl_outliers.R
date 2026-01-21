@@ -1,13 +1,18 @@
 #!/usr/bin/env Rscript
-
-#################################################
-# Script: 05b_pqtl_outliers.R
+# ==============================================================================
+# 05b_pqtl_outliers.R - pQTL-Based Outlier Detection
+# ==============================================================================
+#
+# Purpose:
+#   Detects sample mismatches by comparing observed protein levels with
+#   genotype-predicted protein levels using pQTL variants. Calculates Z-scores
+#   per protein-pQTL pair and uses Mean Absolute Z-score (MeanAbsZ) as the
+#   primary metric for outlier assignment. Uses PCA-cleaned matrix for robust
+#   comparisons.
+#
 # Author: Reza Jabal, PhD (rjabal@broadinstitute.org)
-# Description: pQTL-based sample mismatch detection
-#              Refactored version - Step 05b
-#              Compares observed protein levels with genotype-predicted levels
 # Date: December 2025
-#################################################
+# ==============================================================================
 
 suppressPackageStartupMessages({
     library(data.table)

@@ -1,13 +1,17 @@
 #!/usr/bin/env Rscript
-
-#################################################
-# Script: run_pipeline.R
+# ==============================================================================
+# run_pipeline.R - Master Pipeline Runner
+# ==============================================================================
+#
+# Purpose:
+#   Master pipeline runner for FinnGen 3 Olink analysis. Supports both single-batch
+#   and multi-batch processing modes. Orchestrates execution of all pipeline steps
+#   (00-11) with proper error handling, logging, and step dependencies. Provides
+#   command-line interface for flexible execution control.
+#
 # Author: Reza Jabal, PhD (rjabal@broadinstitute.org)
-# Description: Master pipeline runner for FinnGen 3 Olink analysis
-#              Supports both single-batch and multi-batch processing
-#              Refactored version starting from pre-filtered NPX matrix
 # Date: December 2025
-#################################################
+# ==============================================================================
 
 suppressPackageStartupMessages({
   library(optparse)

@@ -1,12 +1,17 @@
 #!/usr/bin/env Rscript
-
-#################################################
-# Script: 03_zscore_outliers.R
+# ==============================================================================
+# 03_zscore_outliers.R - Z-Score Based Outlier Detection
+# ==============================================================================
+#
+# Purpose:
+#   Detects outliers using per-protein Z-score calculation with iterative refinement.
+#   Flags samples with >10% of proteins having |Z| > 4. Uses iterative detection
+#   to recalculate Z-scores after removing outliers. Operates on the base
+#   analysis-ready matrix for parallel flagging architecture.
+#
 # Author: Reza Jabal, PhD (rjabal@broadinstitute.org)
-# Description: Z-score based outlier detection
-#              Refactored version - loads from Step 02 (technical-cleaned matrix)
 # Date: December 2025
-#################################################
+# ==============================================================================
 
 suppressPackageStartupMessages({
   library(data.table)

@@ -1,12 +1,17 @@
 #!/usr/bin/env Rscript
-
-#################################################
-# Script: 01_pca_outliers.R
+# ==============================================================================
+# 01_pca_outliers.R - PCA-Based Outlier Detection
+# ==============================================================================
+#
+# Purpose:
+#   Detects outliers using Principal Component Analysis (PCA) with multiple filtering
+#   methods: PC1/PC2 thresholds, PC3/PC4 thresholds, sample median filter, and
+#   IQR filter. Uses Olink scaling for PC1/PC2. Operates on the base analysis-ready
+#   matrix for parallel flagging architecture.
+#
 # Author: Reza Jabal, PhD (rjabal@broadinstitute.org)
-# Description: PCA-based outlier detection for proteomics data
-#              Refactored version - loads from Step 00 (pre-filtered NPX matrix)
 # Date: December 2025
-#################################################
+# ==============================================================================
 
 suppressPackageStartupMessages({
   library(data.table)

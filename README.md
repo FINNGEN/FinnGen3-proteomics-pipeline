@@ -2,7 +2,7 @@
 
 **Platform**: Olink Explore HT (5K)
 
-**Version**: 1.2.0
+**Version**: 1.2.1
 
 **Release Date**: January 2026
 
@@ -12,7 +12,7 @@
 
 ## Overview
 
-A comprehensive, Docker-ready R pipeline for analyzing Olink Explore HT (5K) proteomics data. This production-ready workflow provides a complete quality control and normalization pipeline for proteomics data analysis.
+A comprehensive, Docker-ready R pipeline for analysing Olink Explore HT (5K) proteomics data. This production-ready workflow provides a complete quality control and normalisation pipeline for proteomics data analysis.
 
 **Key Features:**
 - **Multi-Format Input Support**: Accepts NPX matrices in Parquet, RDS, or TSV formats with automatic format detection
@@ -20,7 +20,7 @@ A comprehensive, Docker-ready R pipeline for analyzing Olink Explore HT (5K) pro
 - **QC Machine Components**: Technical Outlier Check [PCA → Technical → Z-score] → Sample Provenance Check[Sex Outliers → pQTL-based Outliers]
 - **Fully Configurable**: All paths and parameters configured via YAML config file
 - **Docker-Ready**: Complete Docker setup with automated builds
-- **Multi-Batch Support**: Process and harmonize multiple batches with bridge sample normalization
+- **Multi-Batch Support**: Process and harmonise multiple batches with bridge sample normalisation
 - **Comprehensive QC Reporting**: Integrated outlier tracking with detailed metrics and annotations
 
 **Pipeline Summary:**
@@ -29,8 +29,9 @@ After comprehensive quality control including PCA outlier detection, technical o
 > **Note on Example Numbers**: The example results and statistics provided throughout this README are based on **FinnGen 3 Batch 02** processing. Actual results will vary depending on your specific dataset characteristics, sample size, and data quality. For detailed, batch-specific statistics and comprehensive documentation, please refer to the versioned release notes in the [`/docs/`](./docs/) directory (e.g., `DATA_RELEASE_NOTE_Dec_2025_v2.1.md` and `DATA_RELEASE_NOTE_Dec_2025_v2.1.tex`).
 
 **Expected Results** (example from FG3 Batch 02):
-- **Input**: 2,527 analysis-ready samples (2,477 FinnGen + 50 bridge samples)
-- **Final QCed**: ~2,443 samples (96.7% retention rate)
+- **Input**: 2,527 samples (2,477 FinnGen + 50 bridge samples)
+- **After Initial QC**: 2,522 samples (5 samples removed with >10% missing data)
+- **Final QCed**: ~2,443 samples (96.7% retention rate from initial QC)
 - **Proteins**: 5,440 total (5,416 biological proteins after control probe removal)
 
 ## Pipeline Architecture
@@ -39,9 +40,9 @@ After comprehensive quality control including PCA outlier detection, technical o
 
 ```mermaid
 flowchart TD
-    Start([Start]) --> Loader[00_data_loader.R<br/>Load NPX matrix<br/>Prepare analysis-ready data]
+    Start([Start]) --> Loader[00_data_loader.R<br/>Load NPX matrix<br/>Initial QC: Remove >10% missing<br/>Prepare analysis-ready data]
 
-    Loader --> BaseMatrix[Base Matrix<br/>npx_matrix_analysis_ready<br/>2,527 samples]
+    Loader --> BaseMatrix[Base Matrix<br/>npx_matrix_analysis_ready<br/>2,522 samples<br/>After initial QC]
 
     BaseMatrix --> PCA[01_pca_outliers.R<br/>PCA analysis<br/>SD & IQR outlier detection<br/>Uses: base matrix]
 
@@ -65,11 +66,11 @@ flowchart TD
 
     ProvenanceRun --> QCReport[05d_qc_comprehensive_report.R<br/>Comprehensive QC report<br/>Integrated outlier tracking]
 
-    QCReport --> Normalize[06_normalize_data.R<br/>Median normalization<br/>Standard intra-batch step]
+    QCReport --> Normalize[06_normalize_data.R<br/>Median normalisation<br/>Standard intra-batch step]
 
     Normalize --> BridgeNorm{07_bridge_normalization.R<br/>Optional: Multi-batch only<br/>Enhanced bridge methods<br/>Not used in single-batch}
 
-    BridgeNorm -->|Enabled| BridgeNormRun[Enhanced Bridge<br/>Quantile normalization]
+    BridgeNorm -->|Enabled| BridgeNormRun[Enhanced Bridge<br/>Quantile normalisation]
     BridgeNorm -->|Disabled| Covariate
 
     BridgeNormRun --> Covariate[08_covariate_adjustment.R<br/>Adjust for age/sex/BMI/smoking<br/>Proteomic PCs excluded]
@@ -78,7 +79,7 @@ flowchart TD
 
     Phenotype --> Kinship[10_kinship_filtering.R<br/>Remove related individuals<br/>3rd degree threshold]
 
-    Kinship --> Rank[11_rank_normalize.R<br/>Inverse rank normalization<br/>PLINK format output]
+    Kinship --> Rank[11_rank_normalize.R<br/>Inverse rank normalisation<br/>PLINK format output]
 
     Rank --> Output([Analysis Ready<br/>Phenotypes])
 
@@ -108,7 +109,7 @@ flowchart TD
     Start --> OtherBatch[Other Batches<br/>batch_01, ...]
 
     %% Reference Batch Processing (Parallel Flagging)
-    RefBatch --> Ref00[00_data_loader.R<br/>Load NPX matrix<br/>Prepare data]
+    RefBatch --> Ref00[00_data_loader.R<br/>Load NPX matrix<br/>Initial QC: Remove >10% missing<br/>Prepare data]
     Ref00 --> RefBase[Base Matrix<br/>npx_matrix_analysis_ready]
     RefBase --> Ref01[01_pca_outliers.R<br/>PCA outlier detection<br/>Uses: base matrix]
     RefBase --> Ref02[02_technical_outliers.R<br/>Technical outlier detection<br/>Uses: base matrix<br/>Parallel flagging]
@@ -122,16 +123,16 @@ flowchart TD
     Ref05c -->|Enabled| Ref05cRun[Provenance Test]
     Ref05c -->|Disabled| Ref05d
     Ref05cRun --> Ref05d[05d_qc_comprehensive_report.R<br/>Comprehensive QC report]
-    Ref05d --> Ref06[06_normalize_data.R<br/>Median normalization<br/>Standard intra-batch step]
-    Ref06 --> Ref07[07_bridge_normalization.R<br/>Enhanced bridge normalization]
+    Ref05d --> Ref06[06_normalize_data.R<br/>Median normalisation<br/>Standard intra-batch step]
+    Ref06 --> Ref07[07_bridge_normalization.R<br/>Enhanced bridge normalisation]
     Ref07 --> Ref08[08_covariate_adjustment.R<br/>Covariate adjustment]
     Ref08 --> Ref09[09_prepare_phenotypes.R<br/>Prepare phenotypes]
     Ref09 --> Ref10[10_kinship_filtering.R<br/>Remove related individuals]
-    Ref10 --> Ref11[11_rank_normalize.R<br/>Rank normalization]
+    Ref10 --> Ref11[11_rank_normalize.R<br/>Rank normalisation]
     Ref11 --> RefComplete([Reference Batch<br/>Complete])
 
     %% Other Batch Processing (Parallel Flagging)
-    OtherBatch --> Other00[00_data_loader.R<br/>Load NPX matrix<br/>Prepare data]
+    OtherBatch --> Other00[00_data_loader.R<br/>Load NPX matrix<br/>Initial QC: Remove >10% missing<br/>Prepare data]
     Other00 --> OtherBase[Base Matrix<br/>npx_matrix_analysis_ready]
     OtherBase --> Other01[01_pca_outliers.R<br/>PCA outlier detection<br/>Uses: base matrix]
     OtherBase --> Other02[02_technical_outliers.R<br/>Technical outlier detection<br/>Uses: base matrix<br/>Parallel flagging]
@@ -145,12 +146,12 @@ flowchart TD
     Other05c -->|Enabled| Other05cRun[Provenance Test]
     Other05c -->|Disabled| Other05d
     Other05cRun --> Other05d[05d_qc_comprehensive_report.R<br/>Comprehensive QC report]
-    Other05d --> Other06[06_normalize_data.R<br/>Multi-batch normalization<br/>Primary: Bridge normalization<br/>Comparison: ComBat & Median<br/>Uses: Bridge samples from both batches]
-    Other06 --> Other07[07_bridge_normalization.R<br/>Enhanced bridge normalization<br/>Uses: QCed data from both batches]
+    Other05d --> Other06[06_normalize_data.R<br/>Multi-batch normalisation<br/>Primary: Bridge normalisation<br/>Comparison: ComBat & Median<br/>Uses: Bridge samples from both batches]
+    Other06 --> Other07[07_bridge_normalization.R<br/>Enhanced bridge normalisation<br/>Uses: QCed data from both batches]
     Other07 --> Other08[08_covariate_adjustment.R<br/>Covariate adjustment]
     Other08 --> Other09[09_prepare_phenotypes.R<br/>Prepare phenotypes]
     Other09 --> Other10[10_kinship_filtering.R<br/>Remove related individuals]
-    Other10 --> Other11[11_rank_normalize.R<br/>Rank normalization]
+    Other10 --> Other11[11_rank_normalize.R<br/>Rank normalisation]
     Other11 --> OtherComplete([Other Batch<br/>Complete])
 
     %% Aggregation (Optional)
@@ -159,7 +160,7 @@ flowchart TD
     AggCheck -->|Yes| Agg09[09_prepare_phenotypes.R<br/>Aggregate: Merge matrices<br/>Common proteins only]
     AggCheck -->|No| BatchOutput([Batch-Specific<br/>Outputs])
     Agg09 --> Agg10[10_kinship_filtering.R<br/>Filter related from aggregate]
-    Agg10 --> Agg11[11_rank_normalize.R<br/>Rank normalize aggregate]
+    Agg10 --> Agg11[11_rank_normalize.R<br/>Rank normalise aggregate]
     Agg11 --> AggregateOutput([Aggregate<br/>Output])
 
     %% Styling
@@ -218,21 +219,28 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
 ### Phase 1: Data Loading
 
 #### 00_data_loader.R
-- **Purpose**: Load NPX matrix and prepare analysis-ready data
+- **Purpose**: Load NPX matrix, perform initial QC, and prepare analysis-ready data
 - **Input**:
-  - NPX matrix (Parquet format)
+  - NPX matrix (Parquet, RDS, or TSV format - auto-detected)
   - Metadata file (TSV format)
   - Optional: Bridging sample information
+- **Initial QC**:
+  - **Missing Rate Filtering**: Removes samples with >10% missing data (`max_missing_per_sample: 0.10`)
+  - **Rationale**: Early removal of samples with excessive missing data prevents downstream QC steps from operating on low-quality samples
+  - **Expected Results**: Typically removes ~0.2% of samples (e.g., 5/2,527 for FG3 Batch 02)
+  - **Tracking**: Initial QC failures are tracked in `00_qc_summary.tsv` with `QC_initial_qc` flag for comprehensive reporting
 - **Output**:
-  - `00_npx_matrix_analysis_ready.rds`: Analysis-ready NPX matrix
+  - `00_npx_matrix_analysis_ready.rds`: Analysis-ready NPX matrix (after initial QC)
   - `00_metadata.rds`: Sample metadata
   - `00_sample_mapping.tsv`: Sample mapping with FINNGENIDs
-  - `00_samples_data_raw.rds`: Raw sample-level data (if available)
+  - `00_samples_data_raw.rds`: Long-format sample-level data (reconstructed from matrix)
+  - `00_qc_summary.tsv`: Initial QC summary with missing rates and flags
 
-**Expected Sample Composition**:
+**Expected Sample Composition** (after initial QC):
 - FinnGen samples: ~96% of biological samples
-- Bridge samples: ~2% (for cross-batch harmonization)
+- Bridge samples: ~2% (for cross-batch harmonisation)
 - Non-FinnGen samples: Excluded from analysis
+- **Note**: Samples with >10% missing data are removed during initial QC
 
 ### Phase 2: Quality Control
 
@@ -273,7 +281,7 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
      - Missing rate (>5%)
      - QC failure rate (>30%)
 - **Threshold Rationale**:
-  - **5×MAD ≈ 4×SD**: For normal distributions, MAD/SD ≈ 0.798, therefore 5×MAD ≈ 3.99×SD ≈ 4×SD. This harmonizes with the |Z| > 4 threshold used in Z-score outlier detection, ensuring consistent stringency (~99.994% specificity) across all outlier detection methods.
+  - **5×MAD ≈ 4×SD**: For normal distributions, MAD/SD ≈ 0.798, therefore 5×MAD ≈ 3.99×SD ≈ 4×SD. This harmonises with the |Z| > 4 threshold used in Z-score outlier detection, ensuring consistent stringency (~99.994% specificity) across all outlier detection methods.
   - **5% missing rate threshold**: More stringent than initial QC's 10% threshold, catching samples with borderline missing data (5-10%) that may indicate quality degradation.
   - **30% QC failure rate**: Represents a clear quality failure threshold where samples have substantial measurement problems flagged by Olink's QC system.
 - **Note to Analysts**: High variance (SD outliers) may indicate technical measurement instability, but can also reflect genuine biological heterogeneity (e.g., acute disease states, dynamic physiological processes). Analysts should evaluate these samples in their biological context before exclusion.
@@ -332,7 +340,7 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
 - **Purpose**: Identify sample mismatches by comparing observed vs genotype-predicted protein levels
 - **Input Matrix**: Uses PCA-cleaned matrix (with fallback to analysis-ready matrix). This sequential approach ensures consistency with Sex Outlier Detection and improves robustness by removing technical outliers that could confound mismatch identification.
 - **Method**:
-  1. Applies Inverse Rank Normalization (IRN) to protein expression
+  1. Applies Inverse Rank Normalisation (IRN) to protein expression
   2. Loads consensus pQTLs from Step 05a (or selects top N pQTLs with MAF > 20%)
   3. Extracts genotypes for selected pQTL variants
   4. Calculates expected protein levels per genotype
@@ -395,49 +403,49 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
     - Control probes removed: Incubation controls, Extension controls, Amplification controls
     - The exact number of biological proteins may vary depending on the input data panel
 
-### Phase 3: Normalization
+### Phase 3: Normalisation
 
 #### 06_normalize_data.R
-- **Purpose**: Normalize proteomics data to remove technical variability and ensure sample comparability
-- **Mode-Dependent Behavior**:
+- **Purpose**: Normalise proteomics data to remove technical variability and ensure sample comparability
+- **Mode-Dependent Behaviour**:
 
   **Single-Batch Mode**:
-  - **Primary Method**: **Median Normalization** (standard intra-batch step)
-  - **Rationale**: Median normalization ensures samples are comparable within a single batch before performing statistical tests. This is a standard preprocessing step for proteomics data.
-  - **Note**: Bridge normalization and ComBat are **not applicable** in single-batch mode (they require multiple batches)
+  - **Primary Method**: **Median Normalisation** (standard intra-batch step)
+  - **Rationale**: Median normalisation ensures samples are comparable within a single batch before performing statistical tests. This is a standard preprocessing step for proteomics data.
+  - **Note**: Bridge normalisation and ComBat are **not applicable** in single-batch mode (they require multiple batches)
   - **Expected Performance**: Typically achieves ~9.7% SD reduction
 
   **Multi-Batch Mode**:
-  - **Primary Method**: **Bridge Normalization** (required for cross-batch harmonization)
+  - **Primary Method**: **Bridge Normalisation** (required for cross-batch harmonisation)
     - Uses bridge samples from both batches to calculate combined reference medians
-    - Harmonizes protein expression levels across batches
+    - Harmonises protein expression levels across batches
     - Required for combining data from multiple batches
   - **Comparison Methods** (generated for evaluation):
     - **ComBat**: Batch correction using empirical Bayes framework
-    - **Median**: Standard intra-batch normalization (for comparison)
-  - **Expected Performance**: Bridge normalization achieves cross-batch harmonization while preserving biological variation
+    - **Median**: Standard intra-batch normalisation (for comparison)
+  - **Expected Performance**: Bridge normalisation achieves cross-batch harmonisation while preserving biological variation
 
 - **Evaluation**: SD, MAD, and IQR reduction (CV not meaningful for log-transformed NPX data)
 - **Output**:
-  - `06_npx_matrix_normalized.rds`: Normalized NPX matrix (primary method)
+  - `06_npx_matrix_normalized.rds`: Normalised NPX matrix (primary method)
   - `06_normalization_evaluations.tsv`: Evaluation statistics (SD, MAD, IQR before/after)
-  - `06_normalization_effect_*.pdf`: Visualization plots
+  - `06_normalization_effect_*.pdf`: Visualisation plots
   - Multi-batch mode also saves: `06_npx_matrix_normalized_combat.rds`, `06_npx_matrix_normalized_median.rds` (for comparison)
 
 #### 07_bridge_normalization.R (Optional - Multi-Batch Only)
-- **Purpose**: Enhanced bridge sample normalization for multi-batch integration
+- **Purpose**: Enhanced bridge sample normalisation for multi-batch integration
 - **When to run**: Only when integrating multiple batches (e.g., FG2 + FG3)
 - **Methods**:
   - **Median method**: Quality-filtered bridge samples
   - **Quantile method**: Aligns entire distributions
 - **Output**:
-  - `07_npx_matrix_bridge_enhanced.rds`: Enhanced median normalized
-  - `07_npx_matrix_bridge_quantile.rds`: Quantile normalized
+  - `07_npx_matrix_bridge_enhanced.rds`: Enhanced median normalised
+  - `07_npx_matrix_bridge_quantile.rds`: Quantile normalised
 
 #### 08_covariate_adjustment.R
 - **Purpose**: Adjust for biological covariates (age, sex, BMI, smoking)
 - **Covariates**: Age, sex, BMI, smoking status
-- **Note**: Proteomic PCs are **NOT** adjusted for to preserve biological signal. They are evaluated and visualized but not removed from the data.
+- **Note**: Proteomic PCs are **NOT** adjusted for to preserve biological signal. They are evaluated and visualised but not removed from the data.
 - **Output**:
   - `08_npx_matrix_adjusted.rds`: Covariate-adjusted matrix
   - `08_covariate_effects_summary.tsv`: Effect sizes
@@ -447,30 +455,42 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
 #### 09_prepare_phenotypes.R
 - **Purpose**: Combine all QC results and prepare phenotypes for GWAS
 - **Features**:
-  - Combines outliers from all detection methods
+  - **Uses comprehensive outlier list from Step 05d** (includes ALL outliers: Initial QC, PCA, Technical, Z-score, Sex, pQTL)
+  - Converts outlier SampleIDs to match matrix format
   - Creates FINNGENID-indexed matrices
   - **Multi-Batch Mode**: Merges batch matrices on common proteins
 - **Output**:
+  - `09_phenotype_matrix.rds`: SampleID-indexed phenotype matrix (outliers removed)
   - `09_phenotype_matrix_finngenid.rds`: FINNGENID-indexed phenotype matrix
-  - `09_all_outliers_removed.txt`: Combined outlier list
+  - `09_all_outliers_removed.tsv`: Combined outlier list with FINNGENIDs
 
 #### 10_kinship_filtering.R
-- **Purpose**: Remove related individuals
+- **Purpose**: Remove related individuals and select best sample per person
 - **Threshold**: 3rd degree relationship (0.0884 KING kinship coefficient)
-- **Method**: Preferential retention based on data completeness
+- **Method**:
+  - Preferential retention based on data completeness for related individuals
+  - **Quality-based sample selection**: For FINNGENIDs with multiple SampleIDs (duplicate samples), selects the best quality sample using hierarchical criteria:
+    1. Lower missing rate (primary criterion)
+    2. Higher number of detected proteins (tie-breaker 1)
+    3. Lower SD NPX (more consistent measurements, tie-breaker 2)
+    4. Lexicographic SampleID order (deterministic final tie-breaker)
+  - Uses quality metrics from Step 05d comprehensive QC data when available
+- **Output Consistency**: Ensures SampleID and FINNGENID matrices have matching dimensions (one sample per person)
 - **Note**: The QCed set of samples has **not** been kinship filtered by default. Related individuals (e.g., sample duplicates, siblings, parent-offspring pairs) may be present. Users requiring unrelated samples should apply kinship filtering separately.
 - **Output**:
-  - `10_phenotype_matrix_unrelated.rds`: Unrelated samples matrix
+  - `10_phenotype_matrix_unrelated.rds`: Unrelated samples matrix (SampleID-indexed, one per FINNGENID)
+  - `10_phenotype_matrix_finngenid_unrelated.rds`: Unrelated samples matrix (FINNGENID-indexed)
   - `10_relationship_summary.tsv`: Relationship statistics
+  - `10_samples_unrelated.txt`: List of unrelated sample IDs
 
 #### 11_rank_normalize.R
-- **Purpose**: Apply inverse rank normalization (IRN)
+- **Purpose**: Apply inverse rank normalisation (IRN)
 - **Features**:
-  - Column-wise normalization per protein
+  - Column-wise normalisation per protein
   - Distribution comparison before/after
   - PLINK format output
 - **Output**:
-  - `11_phenotype_matrix_rint.rds`: Rank-normalized matrix
+  - `11_phenotype_matrix_rint.rds`: Rank-normalised matrix
   - `11_phenotype_matrix_rint.pheno`: PLINK format phenotype file
   - `11_proteins_all.txt`: Protein list for analysis
 
@@ -498,7 +518,7 @@ Analysis-ready:           2,527 samples (98.0%)
      Unique samples flagged: 84 (3.32% of 2,527)
      Overlaps: 16 samples flagged by multiple methods
   ↓ Final QC Integration: Remove all flagged samples
-Final (pre-normalization): 2,443 samples (96.68% of 2,527 analysis-ready)
+Final (pre-normalisation): 2,443 samples (96.68% of 2,527 analysis-ready)
 ```
 
 **Total samples removed from raw (2,600 → 2,443)**: 157 samples (6.04%)
@@ -518,7 +538,7 @@ Final (pre-normalization): 2,443 samples (96.68% of 2,527 analysis-ready)
 **Biological Proteins**: When control probe removal is enabled (default: `parameters.qc.remove_control_probes: true`), the pipeline creates separate "biological-only" outputs with control probes removed. For Olink Explore HT (5K) panel, this typically results in **5,416 biological proteins** (5,440 - 24 = 5,416).
 
 **Rationale for protein retention**: All proteins passed initial QC with <10% missing data threshold. Proteins were not excluded during QC as the full list is important for:
-- Future batch comparisons and harmonization
+- Future batch comparisons and harmonisation
 - Comprehensive proteome coverage
 - Cross-study validation
 
@@ -542,12 +562,12 @@ Final (pre-normalization): 2,443 samples (96.68% of 2,527 analysis-ready)
 | **PCA (Sample IQR)** | mean ± 5×SD | Detects unusual variability patterns |
 | **Sex mismatch** | predicted_sex ≠ genetic_sex (0.5 threshold) | Binary label error, severe classification errors |
 | **Sex outlier** | 0.5 threshold | Borderline predictions, mild warning |
-| **Technical (Plate/Batch/Processing)** | 5×MAD ≈ 4×SD | Robust, harmonized with z-score method |
+| **Technical (Plate/Batch/Processing)** | 5×MAD ≈ 4×SD | Robust, harmonised with z-score method |
 | **Technical (Sample mean NPX)** | 5×MAD ≈ 4×SD | Two-sided, robust to outliers |
 | **Technical (Sample SD NPX)** | median + 4×MAD | One-sided upper, high variance detection |
 | **Technical (Missing rate)** | 5% (fixed) | More stringent than Initial QC, catches borderline cases |
 | **Technical (QC failure rate)** | 30% (fixed) | Olink QC flags, different from missing data |
-| **Z-score (Per-protein)** | \|Z\| > 4 | ~99.994% specificity, harmonized with Technical method |
+| **Z-score (Per-protein)** | \|Z\| > 4 | ~99.994% specificity, harmonised with Technical method |
 | **Z-score (Sample threshold)** | >10% proteins | Requires systematic issues, not isolated extremes |
 | **pQTL (MeanAbsZ)** | mean + 4×SD | Population-based, SD-based (not MAD), exclusively used for outlier assignment. Note: 4×SD ≈ 5×MAD for normal distributions |
 
@@ -639,7 +659,7 @@ The pipeline is configured via a YAML file. See `config/config.yaml.template` fo
 
 ### Optional Files
 
-- **Bridging Samples**: For multi-batch normalization
+- **Bridging Samples**: For multi-batch normalisation
 - **Covariate Files**: For covariate adjustment
 - **Kinship Matrix**: For kinship filtering
 
@@ -651,7 +671,7 @@ output/
 │   └── batch_XX/
 ├── outliers/              # Outlier detection results
 │   └── batch_XX/
-├── normalized/            # Normalized matrices
+├── normalized/            # Normalised matrices
 │   └── batch_XX/
 ├── phenotypes/            # Analysis-ready phenotypes
 │   └── batch_XX/
@@ -676,8 +696,8 @@ echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
 # Pull the image
 docker pull ghcr.io/USERNAME/fg3-olink-pipeline:latest
 
-# Or pull a specific version (e.g., v1.2.0)
-docker pull ghcr.io/USERNAME/fg3-olink-pipeline:1.0.0
+# Or pull a specific version (e.g., v1.2.1)
+docker pull ghcr.io/USERNAME/fg3-olink-pipeline:1.2.1
 
 # Run the pipeline
 docker run --rm \
@@ -689,7 +709,7 @@ docker run --rm \
   --batch batch_02
 ```
 
-**Note**: Replace `USERNAME` with your GitHub username or organization name.
+**Note**: Replace `USERNAME` with your GitHub username or organisation name.
 
 #### Option 2: Build Locally
 
@@ -733,7 +753,7 @@ Rscript scripts/01_pca_outliers.R
 ## Pipeline Design Principles
 
 1. **Modular Architecture**: Each step is a standalone script that can be run independently
-2. **QC Step Ordering**: PCA → Technical → Z-score → Sex → pQTL (optimized for sequential filtering)
+2. **QC Step Ordering**: PCA → Technical → Z-score → Sex → pQTL (optimised for sequential filtering)
 3. **Configuration-Driven**: All paths and parameters configured via YAML (no hardcoded paths)
 4. **Docker-Ready**: Complete Docker setup with automated builds via GitHub Actions
 5. **Sequential Numbering**: Steps numbered 00-11 for clear execution order
@@ -749,7 +769,7 @@ The pipeline supports processing multiple batches:
 docker-compose run -e PIPELINE_BATCH_ID=batch_01 fg3-olink-pipeline
 docker-compose run -e PIPELINE_BATCH_ID=batch_02 fg3-olink-pipeline
 ```
-3. Enable multi-batch normalization in config:
+3. Enable multi-batch normalisation in config:
 ```yaml
 parameters:
   normalization:
@@ -761,7 +781,7 @@ parameters:
 ### R Packages
 - **Core**: data.table, tidyverse, arrow, yaml, logger
 - **Analysis**: glmnet, pheatmap, pROC, PRROC, OlinkAnalyze, sva
-- **Visualization**: ggplot2, ggrepel, paletteer, gridExtra
+- **Visualisation**: ggplot2, ggrepel, paletteer, gridExtra
 - **Optional**: randomForest, xgboost, caret, keras3, tensorflow
 
 ### External Tools
@@ -770,15 +790,15 @@ parameters:
 
 ## Important Notes
 
-1. **Bridge samples**: Bridge samples are included in the analysis-ready dataset and are used for cross-batch harmonization. Typically 96%+ of bridge samples have genetic sex information recovered.
+1. **Bridge samples**: Bridge samples are included in the analysis-ready dataset and are used for cross-batch harmonisation. Typically 96%+ of bridge samples have genetic sex information recovered.
 
 2. **Non-FinnGen samples**: Non-FinnGen samples are identified and excluded from analysis. These samples are not included in the final clean dataset or comprehensive QC reports.
 
-3. **Duplicate FINNGENIDs**: Technical replicates may be identified but retained in the dataset for analysis flexibility.
+3. **Duplicate FINNGENIDs**: Technical replicates (multiple SampleIDs per FINNGENID) are handled automatically in Step 10 (Kinship Filtering). When multiple samples exist for the same FINNGENID, the pipeline selects the best quality sample based on missing rate, number of detected proteins, and measurement consistency (SD NPX). This ensures one sample per person in both SampleID and FINNGENID matrices.
 
-4. **Kinship filtering**: The QCed set of samples has **not** been kinship filtered by default. Related individuals may be present. Users requiring unrelated samples should apply kinship filtering separately using appropriate relationship thresholds (e.g., 3rd degree relationships, kinship coefficient < 0.0884).
+4. **Kinship filtering**: The QCed set of samples has **not** been kinship filtered by default. Related individuals may be present. Users requiring unrelated samples should apply kinship filtering separately using appropriate relationship thresholds (e.g., 3rd degree relationships, kinship coefficient < 0.0884). Step 10 automatically handles duplicate FINNGENIDs by selecting the highest quality sample for each person.
 
-5. **Outlier detection strategy**: The QC pipeline consists of two integral components: (1) **Technical outlier detection** (PCA, Technical, Z-score) operates on the same base matrix to avoid cascading bias; (2) **Provenance steps** (Sex, pQTL) operate on the PCA-cleaned matrix to identify mismatches using samples that have already passed technical quality filters. All samples are flagged but not removed until final QC integration.
+5. **Outlier detection strategy**: The QC pipeline consists of two integral components: (1) **Technical outlier detection** (PCA, Technical, Z-score) operates on the same base matrix to avoid cascading bias; (2) **Provenance steps** (Sex, pQTL) operate on the PCA-cleaned matrix to identify mismatches using samples that have already passed technical quality filters. All samples are flagged but not removed until final QC integration. Step 09 uses the comprehensive outlier list from Step 05d, which includes outliers from all QC steps (Initial QC, PCA, Technical, Z-score, Sex, pQTL).
 
 6. **Biological factors**: QC flags may reflect biological variation rather than technical errors. This includes samples from individuals undergoing gender-affirming hormone therapy, paediatric samples, and individuals with sex chromosome abnormalities. Analysts should evaluate flagged samples in their clinical and developmental context before exclusion.
 
@@ -810,7 +830,7 @@ If you use this pipeline, please cite:
 
 - **Pipeline**: FinnGen 3 Olink Proteomics Analysis Pipeline
 - **Author**: Reza Jabal, PhD (rjabal@broadinstitute.org)
-- **Version**: 1.2.0
+- **Version**: 1.2.1
 - **Release Date**: January 2026
 - **Platform**: Olink Explore HT (5K)
 
@@ -826,7 +846,7 @@ This pipeline and associated documentation files (the "Pipeline") are provided f
 
 3. **Research Use**: This Pipeline is intended for research and academic purposes. Users are responsible for ensuring compliance with all applicable laws, regulations, and institutional policies.
 
-4. **Third-Party Dependencies**: This Pipeline depends on various third-party software packages and libraries, each with their own licenses. Users are responsible for compliance with all applicable licenses for dependencies.
+4. **Third-Party Dependencies**: This Pipeline depends on various third-party software packages and libraries, each with their own licences. Users are responsible for compliance with all applicable licences for dependencies.
 
 5. **No Warranty**: THE PIPELINE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE PIPELINE OR THE USE OR OTHER DEALINGS IN THE PIPELINE.
 

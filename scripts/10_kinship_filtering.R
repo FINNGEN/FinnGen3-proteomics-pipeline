@@ -1,13 +1,20 @@
 #!/usr/bin/env Rscript
-
-#################################################
-# Script: 10_kinship_filtering.R
+# ==============================================================================
+# 10_kinship_filtering.R - Kinship Filtering and Quality-Based Sample Selection
+# ==============================================================================
+#
+# Purpose:
+#   Removes related individuals using kinship matrix (3rd degree threshold:
+#   0.0884 KING kinship coefficient). For FINNGENIDs with multiple SampleIDs
+#   (duplicate samples), selects the best quality sample using hierarchical
+#   criteria: missing rate (lower) → n_detected_proteins (higher) → SD NPX
+#   (lower) → SampleID (lexicographic). Ensures consistent matrix dimensions
+#   (one sample per person).
+#
 # Author: Reza Jabal, PhD (rjabal@broadinstitute.org)
-# Description: Filter related individuals using kinship matrix
-#              Refactored version
-#              Refactored version
-# Date: December 2025
-#################################################
+# Date: December 2025 (Updated: January 2026 - Quality-based sample selection implementation)
+# Date: December 2025 (Updated: January 2026 - Quality-based sample selection implementation)
+# ==============================================================================
 
 suppressPackageStartupMessages({
   library(data.table)
@@ -23,12 +30,40 @@ utils::globalVariables(c(
   "ID1_kept", "ID2_kept", "correct", "."
 ))
 
-# Set up logging
-log_appender(appender_file())
-log_info("Starting kinship filtering")
+# Source path utilities for batch-aware paths
+script_dir <- tryCatch({
+  env_script <- Sys.getenv("SCRIPT_NAME", "")
+  if (env_script != "" && file.exists(env_script)) {
+    dirname(normalizePath(env_script))
+  } else {
+    args <- commandArgs(trailingOnly = FALSE)
+    file_arg <- grep("^--file=", args, value = TRUE)
+    if (length(file_arg) > 0) {
+      script_path <- sub("^--file=", "", file_arg)
+      dirname(normalizePath(script_path))
+    } else {
+      getwd()
+    }
+  }
+}, error = function(e) getwd())
+source(file.path(script_dir, "path_utils.R"))
 
-# Load configuration
-config <- read_yaml("")
+# Load configuration first
+config_file <- Sys.getenv("PIPELINE_CONFIG", "")
+if (config_file == "" || !file.exists(config_file)) {
+  stop("PIPELINE_CONFIG environment variable not set or config file not found. Please provide path to config file.")
+}
+config <- read_yaml(config_file)
+
+# Get batch context
+batch_id <- Sys.getenv("PIPELINE_BATCH_ID", config$batch$default_batch_id %||% "batch_01")
+step_num <- get_step_number()
+
+# Set up logging with batch-aware path
+log_path <- get_log_path(step_num, batch_id, config = config)
+ensure_output_dir(log_path)
+log_appender(appender_file(log_path))
+log_info("Starting kinship filtering for batch: {batch_id}")
 
 # Function to load kinship matrix
 load_kinship <- function(kinship_file) {
@@ -204,6 +239,117 @@ create_relationship_summary <- function(related_pairs, sample_ids) {
   return(summary)
 }
 
+# Function to select best SampleID per FINNGENID based on quality metrics
+# Uses hierarchical criteria: missing rate -> n_detected_proteins -> SD NPX -> lexicographic order
+select_best_sample_per_finngenid <- function(unrelated_finngenids, sample_mapping, phenotype_matrix,
+                                             comprehensive_qc_data = NULL, batch_id, config) {
+  log_info("Selecting best SampleID per FINNGENID based on quality metrics")
+
+  # Get all SampleIDs for unrelated FINNGENIDs
+  all_candidates <- sample_mapping[FINNGENID %in% unrelated_finngenids & !is.na(FINNGENID)]
+
+  # Filter to samples that exist in phenotype matrix
+  all_candidates <- all_candidates[SampleID %in% rownames(phenotype_matrix)]
+
+  # Load comprehensive QC data if available (contains pre-calculated metrics)
+  if (is.null(comprehensive_qc_data)) {
+    comprehensive_qc_path <- get_output_path("05d", "comprehensive_outliers_list", batch_id, "phenotypes", "tsv", config = config)
+    if (file.exists(comprehensive_qc_path)) {
+      comprehensive_qc_data <- fread(comprehensive_qc_path)
+      log_info("Loaded comprehensive QC data: {nrow(comprehensive_qc_data)} samples")
+    } else {
+      log_warn("Comprehensive QC data not found - will calculate metrics from phenotype matrix")
+      comprehensive_qc_data <- NULL
+    }
+  }
+
+  # Calculate quality metrics for each SampleID
+  quality_metrics <- data.table(
+    SampleID = all_candidates$SampleID,
+    FINNGENID = all_candidates$FINNGENID
+  )
+
+  # Calculate missing rate and number of detected proteins from phenotype matrix
+  # Filter phenotype matrix to only candidates for efficiency
+  candidate_sampleids <- quality_metrics$SampleID
+  samples_in_matrix <- intersect(candidate_sampleids, rownames(phenotype_matrix))
+
+  # Initialize metrics with worst-case values
+  quality_metrics[, missing_rate := 1.0]
+  quality_metrics[, n_detected_proteins := 0]
+  quality_metrics[, sd_npx := Inf]
+
+  # Calculate metrics for samples that exist in matrix
+  if (length(samples_in_matrix) > 0) {
+    candidate_matrix <- phenotype_matrix[samples_in_matrix, , drop = FALSE]
+    n_proteins <- ncol(candidate_matrix)
+
+    # Calculate all metrics efficiently
+    missing_counts <- rowSums(is.na(candidate_matrix))
+    detected_counts <- n_proteins - missing_counts
+    missing_rates <- missing_counts / n_proteins
+
+    # Calculate SD for each sample
+    sd_values <- apply(candidate_matrix, 1, function(x) {
+      result <- sd(x, na.rm = TRUE)
+      if (is.na(result)) Inf else result
+    })
+
+    # Update quality metrics for samples in matrix
+    quality_metrics[SampleID %in% samples_in_matrix, missing_rate := missing_rates[SampleID]]
+    quality_metrics[SampleID %in% samples_in_matrix, n_detected_proteins := detected_counts[SampleID]]
+    quality_metrics[SampleID %in% samples_in_matrix, sd_npx := sd_values[SampleID]]
+  }
+
+  # If comprehensive QC data available, use pre-calculated SD NPX (more accurate)
+  if (!is.null(comprehensive_qc_data) && "QC_technical_sd_npx" %in% names(comprehensive_qc_data)) {
+    qc_sd <- comprehensive_qc_data[, .(SampleID, QC_technical_sd_npx)]
+    quality_metrics <- merge(quality_metrics, qc_sd, by = "SampleID", all.x = TRUE)
+    # Use QC SD if available, otherwise use calculated SD
+    quality_metrics[!is.na(QC_technical_sd_npx), sd_npx := QC_technical_sd_npx]
+    quality_metrics[, QC_technical_sd_npx := NULL]
+  }
+
+  # Handle NA values in SD (set to Inf so they rank last)
+  quality_metrics[is.na(sd_npx), sd_npx := Inf]
+
+  # Select best SampleID per FINNGENID using hierarchical criteria:
+  # 1. Lower missing rate (better)
+  # 2. Higher n_detected_proteins (better)
+  # 3. Lower SD NPX (more consistent, better)
+  # 4. Lexicographic SampleID order (deterministic tie-breaker)
+  setorder(quality_metrics, FINNGENID, missing_rate, -n_detected_proteins, sd_npx, SampleID)
+
+  # Keep first SampleID for each FINNGENID (best quality)
+  selected_samples <- quality_metrics[, .SD[1], by = FINNGENID]
+
+  n_duplicates_handled <- sum(quality_metrics[, .N, by = FINNGENID]$N > 1)
+  if (n_duplicates_handled > 0) {
+    log_info("Selected best SampleID for {n_duplicates_handled} FINNGENIDs with multiple SampleIDs")
+    log_info("  Selection criteria: missing_rate (lower) -> n_detected_proteins (higher) -> sd_npx (lower) -> SampleID (lexicographic)")
+
+    # Log example selections
+    dup_counts <- quality_metrics[, .N, by = FINNGENID][N > 1]
+    if (nrow(dup_counts) > 0) {
+      n_examples <- min(3, nrow(dup_counts))
+      example_finngenids <- dup_counts[seq_len(n_examples)]$FINNGENID
+      for (fgid in example_finngenids) {
+        candidates <- quality_metrics[FINNGENID == fgid]
+        selected <- selected_samples[FINNGENID == fgid]$SampleID
+        log_info("  Example FINNGENID {fgid}:")
+        for (j in seq_len(nrow(candidates))) {
+          marker <- if (candidates[j]$SampleID == selected) "✓ SELECTED" else "  "
+          log_info("    {marker} {candidates[j]$SampleID}: MR={round(candidates[j]$missing_rate, 4)}, N={candidates[j]$n_detected_proteins}, SD={round(candidates[j]$sd_npx, 3)}")
+        }
+      }
+    }
+  } else {
+    log_info("No duplicate FINNGENIDs found - all samples unique")
+  }
+
+  return(selected_samples$SampleID)
+}
+
 # Function to filter phenotype matrix
 filter_phenotype_matrix <- function(phenotype_matrix, unrelated_samples) {
   log_info("Filtering phenotype matrix to unrelated samples")
@@ -225,10 +371,14 @@ verify_duplicate_handling <- function(duplicate_finngenids_file, related_pairs, 
   log_info("VERIFYING DUPLICATE SAMPLE HANDLING")
   log_info(paste(rep("=", 50), collapse = ""))
 
-  # Load duplicate FINNGENIDs list
-  if(!file.exists(duplicate_finngenids_file)) {
-    log_warn("Duplicate FINNGENIDs file not found: {duplicate_finngenids_file}")
-    log_warn("Skipping duplicate verification")
+  # Load duplicate FINNGENIDs list (optional)
+  if(is.null(duplicate_finngenids_file) || duplicate_finngenids_file == "" || !file.exists(duplicate_finngenids_file)) {
+    if(is.null(duplicate_finngenids_file) || duplicate_finngenids_file == "") {
+      log_info("Duplicate FINNGENIDs file not specified - skipping duplicate verification")
+    } else {
+      log_warn("Duplicate FINNGENIDs file not found: {duplicate_finngenids_file}")
+      log_warn("Skipping duplicate verification")
+    }
     return(NULL)
   }
 
@@ -451,25 +601,22 @@ main <- function() {
     error = function(e) FALSE
   )
 
-  # Determine input prefix based on aggregation mode
-  if (aggregate_output) {
-    input_prefix <- "batch2_"
-    output_prefix <- "batch2_"
-    log_info("Aggregation mode: Using batch 2 inputs/outputs with 'batch2_' prefix")
-  } else {
-    input_prefix <- "11_"
-    output_prefix <- "12_"
-    log_info("Single-batch mode: Using standard '11_'/'12_' prefixes")
+  # Load data from previous steps using batch-aware paths
+  log_info("Loading data from previous steps")
+  phenotype_matrix_path <- get_output_path("09", "phenotype_matrix", batch_id, "phenotypes", config = config)
+  finngenid_matrix_path <- get_output_path("09", "phenotype_matrix_finngenid", batch_id, "phenotypes", config = config)
+
+  if (!file.exists(phenotype_matrix_path)) {
+    stop("Phenotype matrix not found: {phenotype_matrix_path}. Please run step 09 first.")
   }
 
-  # Load data from previous steps
-  log_info("Loading data from previous steps")
-  phenotype_matrix <- readRDS(paste0(, input_prefix, "phenotype_matrix.rds"))
+  phenotype_matrix <- readRDS(phenotype_matrix_path)
   finngenid_matrix <- NULL
-  finngenid_file <- paste0(, input_prefix, "phenotype_matrix_finngenid.rds")
-  if(file.exists(finngenid_file)) {
-    finngenid_matrix <- readRDS(finngenid_file)
+  if(file.exists(finngenid_matrix_path)) {
+    finngenid_matrix <- readRDS(finngenid_matrix_path)
+    log_info("Loaded FINNGENID-indexed matrix: {nrow(finngenid_matrix)} samples")
   }
+  log_info("Loaded phenotype matrix: {nrow(phenotype_matrix)} samples x {ncol(phenotype_matrix)} proteins")
 
   # Load kinship matrix
   kinship <- load_kinship(config$covariates$kinship_file)
@@ -503,8 +650,26 @@ main <- function() {
     matrix_for_filtering
   )
 
-  # Verify duplicate handling
-  duplicate_file <-
+  # Verify duplicate handling (optional - requires duplicate FINNGENIDs file)
+  # Check if duplicate file is specified in config, otherwise set to NULL
+  duplicate_file <- tryCatch(
+    config$covariates$duplicate_finngenids_file,
+    error = function(e) NULL
+  )
+
+  # If not in config, try to find it in a standard location (optional)
+  if (is.null(duplicate_file) || duplicate_file == "") {
+    # Try to find duplicate file in output directory (if it exists from QC steps)
+    duplicate_file_candidate <- get_output_path("00", "duplicate_finngenids", batch_id, "qc", "tsv", config = config)
+    if (file.exists(duplicate_file_candidate)) {
+      duplicate_file <- duplicate_file_candidate
+      log_info("Found duplicate FINNGENIDs file: {duplicate_file}")
+    } else {
+      log_info("Duplicate FINNGENIDs file not specified or found - skipping duplicate verification")
+      duplicate_file <- NULL
+    }
+  }
+
   verification_result <- verify_duplicate_handling(
     duplicate_file,
     related_pairs_in_data,
@@ -520,38 +685,80 @@ main <- function() {
   relationship_summary <- create_relationship_summary(related_pairs_in_data, sample_ids)
 
   # Filter phenotype matrices
-  phenotype_unrelated <- filter_phenotype_matrix(
-    phenotype_matrix,
-    unrelated_result$unrelated_samples
-  )
-
+  # CRITICAL: If using FINNGENID-indexed matrix, unrelated_samples are FINNGENIDs
+  # We need to filter the FINNGENID matrix, and optionally convert back to SampleID matrix
   if(!is.null(finngenid_matrix)) {
+    # Filter FINNGENID-indexed matrix (unrelated_samples are FINNGENIDs)
     finngenid_unrelated <- filter_phenotype_matrix(
       finngenid_matrix,
       unrelated_result$unrelated_samples
     )
+
+    # Convert FINNGENID-unrelated samples back to SampleID format for phenotype_matrix
+    # CRITICAL: Select ONE SampleID per FINNGENID based on quality metrics
+    # This ensures SampleID matrix matches FINNGENID matrix dimensions (one sample per person)
+    sample_mapping_path <- get_output_path("00", "sample_mapping", batch_id, "qc", "tsv", config = config)
+    if (file.exists(sample_mapping_path)) {
+      sample_mapping <- fread(sample_mapping_path)
+
+      # Select best SampleID per FINNGENID using quality-based selection
+      # Load comprehensive QC data for pre-calculated metrics
+      comprehensive_qc_path <- get_output_path("05d", "comprehensive_outliers_list", batch_id, "phenotypes", "tsv", config = config)
+      comprehensive_qc_data <- NULL
+      if (file.exists(comprehensive_qc_path)) {
+        comprehensive_qc_data <- fread(comprehensive_qc_path)
+      }
+
+      unrelated_sampleids <- select_best_sample_per_finngenid(
+        unrelated_result$unrelated_samples,
+        sample_mapping,
+        phenotype_matrix,
+        comprehensive_qc_data,
+        batch_id,
+        config
+      )
+
+      # Filter SampleID-indexed matrix using selected SampleIDs (one per FINNGENID)
+      phenotype_unrelated <- filter_phenotype_matrix(
+        phenotype_matrix,
+        unrelated_sampleids
+      )
+      log_info("Selected {length(unrelated_sampleids)} SampleIDs (one per FINNGENID) from {length(unrelated_result$unrelated_samples)} unrelated FINNGENIDs")
+    } else {
+      log_warn("Sample mapping not found - cannot convert FINNGENIDs to SampleIDs")
+      log_warn("Using empty SampleID matrix (will use FINNGENID matrix only)")
+      phenotype_unrelated <- phenotype_matrix[character(0), ]  # Empty matrix with same structure
+    }
   } else {
+    # No FINNGENID matrix - use SampleIDs directly
+    phenotype_unrelated <- filter_phenotype_matrix(
+      phenotype_matrix,
+      unrelated_result$unrelated_samples
+    )
     finngenid_unrelated <- NULL
   }
 
   # Save outputs
   log_info("Saving kinship filtering results")
 
-  # Save filtered matrices
-  saveRDS(phenotype_unrelated,
-          paste0(, output_prefix, "phenotype_matrix_unrelated.rds"))
+  # Save filtered matrices using batch-aware paths
+  phenotype_unrelated_path <- get_output_path(step_num, "phenotype_matrix_unrelated", batch_id, "phenotypes", config = config)
+  ensure_output_dir(phenotype_unrelated_path)
+  saveRDS(phenotype_unrelated, phenotype_unrelated_path)
+
   if(!is.null(finngenid_unrelated)) {
-    saveRDS(finngenid_unrelated,
-            paste0(, output_prefix, "phenotype_matrix_finngenid_unrelated.rds"))
+    finngenid_unrelated_path <- get_output_path(step_num, "phenotype_matrix_finngenid_unrelated", batch_id, "phenotypes", config = config)
+    ensure_output_dir(finngenid_unrelated_path)
+    saveRDS(finngenid_unrelated, finngenid_unrelated_path)
   }
 
   # Save sample lists
-  fwrite(data.table(IID = unrelated_result$unrelated_samples),
-         paste0(, output_prefix, "samples_unrelated.txt"),
-         col.names = FALSE)
-  fwrite(data.table(IID = unrelated_result$removed_samples),
-         paste0(, output_prefix, "samples_related_removed.txt"),
-         col.names = FALSE)
+  samples_unrelated_path <- get_output_path(step_num, "samples_unrelated", batch_id, "phenotypes", "txt", config = config)
+  samples_removed_path <- get_output_path(step_num, "samples_related_removed", batch_id, "phenotypes", "txt", config = config)
+  ensure_output_dir(samples_unrelated_path)
+  ensure_output_dir(samples_removed_path)
+  fwrite(data.table(IID = unrelated_result$unrelated_samples), samples_unrelated_path, col.names = FALSE)
+  fwrite(data.table(IID = unrelated_result$removed_samples), samples_removed_path, col.names = FALSE)
 
   # Save relationship information with FINNGENID mapping
   # Source path utilities for FINNGENID mapping
@@ -598,19 +805,20 @@ main <- function() {
     related_pairs_with_fgid <- related_pairs_in_data
   }
 
-  fwrite(related_pairs_with_fgid,
-         paste0(, output_prefix, "related_pairs.tsv"),
-         sep = "\t")
-  fwrite(relationship_summary,
-         paste0(, output_prefix, "relationship_summary.tsv"),
-         sep = "\t")
+  related_pairs_path <- get_output_path(step_num, "related_pairs", batch_id, "phenotypes", "tsv", config = config)
+  relationship_summary_path <- get_output_path(step_num, "relationship_summary", batch_id, "phenotypes", "tsv", config = config)
+  ensure_output_dir(related_pairs_path)
+  ensure_output_dir(relationship_summary_path)
+  fwrite(related_pairs_with_fgid, related_pairs_path, sep = "\t")
+  fwrite(relationship_summary, relationship_summary_path, sep = "\t")
 
   # Handle aggregation if enabled
   if (aggregate_output && multi_batch_mode && !is.null(finngenid_unrelated)) {
     log_info("Aggregation enabled: Attempting to filter batch 1 and create aggregate output")
 
     # Check if batch 1 processed data exists
-    batch1_file <-
+    other_batch_id <- if (batch_id == "batch_02") "batch_01" else "batch_02"
+    batch1_file <- get_output_path(step_num, "phenotype_matrix_finngenid_unrelated", other_batch_id, "phenotypes", config = config)
 
     if (file.exists(batch1_file)) {
       log_info("Found batch 1 kinship-filtered data: Creating aggregate output")
@@ -635,12 +843,15 @@ main <- function() {
         aggregate_unrelated <- rbind(batch1_subset, batch2_subset)
         log_info("Aggregate unrelated matrix: {nrow(aggregate_unrelated)} samples x {ncol(aggregate_unrelated)} proteins")
 
-        # Save aggregate output
-        saveRDS(aggregate_unrelated,
-                )
-        fwrite(data.table(FINNGENID = rownames(aggregate_unrelated)),
-               ,
-               col.names = FALSE)
+        # Save aggregate output using batch-aware paths
+        aggregate_dir <- file.path(config$output$base_dir, "phenotypes", "aggregate")
+        dir.create(aggregate_dir, recursive = TRUE, showWarnings = FALSE)
+
+        aggregate_matrix_path <- file.path(aggregate_dir, "aggregate_phenotype_matrix_finngenid_unrelated.rds")
+        aggregate_samples_path <- file.path(aggregate_dir, "aggregate_samples_unrelated.txt")
+
+        saveRDS(aggregate_unrelated, aggregate_matrix_path)
+        fwrite(data.table(FINNGENID = rownames(aggregate_unrelated)), aggregate_samples_path, col.names = FALSE)
       } else {
         log_warn("Too few common proteins for aggregation")
       }

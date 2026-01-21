@@ -1,6 +1,18 @@
-# Helper functions for multicollinearity-aware age association analysis
+#!/usr/bin/env Rscript
+# ==============================================================================
+# 08_helper_multicollinearity_adjustment.R - Multicollinearity-Aware Age Association
+# ==============================================================================
+#
+# Purpose:
+#   Helper functions for multicollinearity-aware age association analysis. Addresses
+#   extreme effect sizes caused by highly correlated proteins by identifying correlated
+#   protein groups and selecting representative proteins using regression-based
+#   selection (lowest p-value, highest R²). Used in age-association analysis to
+#   prevent inflated effect sizes from multicollinearity.
+#
 # Author: Reza Jabal, PhD (rjabal@broadinstitute.org)
-# Purpose: Address extreme effect sizes caused by highly correlated proteins
+# Date: December 2025
+# ==============================================================================
 
 #' Identify correlated protein groups
 #'

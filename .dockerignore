@@ -6,6 +6,7 @@
 # Documentation
 *.md
 !README.md
+COMMIT_MESSAGE.txt
 
 # Output directories (will be mounted as volumes)
 output/

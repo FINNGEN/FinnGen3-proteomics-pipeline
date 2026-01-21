@@ -1,14 +1,17 @@
 #!/usr/bin/env Rscript
-
-#################################################
-# Script: 05c_provenance_test.R
+# ==============================================================================
+# 05c_provenance_test.R - Provenance Test and Validation
+# ==============================================================================
+#
+# Purpose:
+#   Unit test for governance components validation. Tests sex outlier detection
+#   (Step 04) and pQTL outlier detection (Step 05b) to ensure correct
+#   implementation and threshold application. Optional step that can be disabled
+#   in production runs.
+#
 # Author: Reza Jabal, PhD (rjabal@broadinstitute.org)
-# Description: Unit test for governance components validation
-#              Refactored version
-#              Refactored version
-#              Tests sex outlier detection (04) and pQTL outlier detection (05b)
 # Date: December 2025
-#################################################
+# ==============================================================================
 
 suppressPackageStartupMessages({
     library(data.table)

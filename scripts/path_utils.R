@@ -1,12 +1,17 @@
 #!/usr/bin/env Rscript
-
-#################################################
-# Script: path_utils.R
+# ==============================================================================
+# path_utils.R - Batch-Aware Path Construction Utilities
+# ==============================================================================
+#
+# Purpose:
+#   Provides shared utility functions for constructing batch-aware output paths
+#   across all pipeline scripts. Ensures consistent file naming and directory
+#   structure for both single-batch and multi-batch modes. All paths are derived
+#   from configuration files or environment variables with no hardcoded paths.
+#
 # Author: Reza Jabal, PhD (rjabal@broadinstitute.org)
-# Description: Shared utility functions for batch-aware path construction
-#              General-purpose implementation with no hardcoded paths
 # Date: December 2025
-#################################################
+# ==============================================================================
 
 # This file provides utility functions for constructing batch-aware output paths
 # across all pipeline scripts. It ensures consistent file naming and directory

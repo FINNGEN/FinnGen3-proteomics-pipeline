@@ -1,13 +1,17 @@
 #!/usr/bin/env Rscript
-
-#################################################
-# Script: 00_data_loader.R
+# ==============================================================================
+# 00_data_loader.R - Load NPX Matrix and Perform Initial QC
+# ==============================================================================
+#
+# Purpose:
+#   Loads NPX matrix from multiple formats (Parquet, RDS, or TSV - auto-detected),
+#   performs initial QC by removing samples with >10% missing data, and prepares
+#   analysis-ready matrices. Creates sample mapping with FINNGENIDs and long-format
+#   sample data for downstream QC steps. Supports both single-batch and multi-batch modes.
+#
 # Author: Reza Jabal, PhD (rjabal@broadinstitute.org)
-# Description: Load pre-filtered NPX matrix and prepare analysis-ready data
-#              Starting point: NPX matrix with AG samples already removed
-#              Supports both single-batch and multi-batch modes
-# Date: December 2025
-#################################################
+# Date: December 2025 (Updated: January 2026 - Added initial QC filtering)
+# ==============================================================================
 
 # Load required libraries
 suppressPackageStartupMessages({
@@ -126,7 +130,7 @@ load_npx_matrix <- function(matrix_file) {
         break
       }
     }
-    
+
     if (!is.null(found_id_col)) {
       setnames(dt, found_id_col, "SampleID")
       log_info("Renamed column '{found_id_col}' to 'SampleID'")
@@ -350,7 +354,7 @@ create_long_format_samples_data <- function(npx_matrix, metadata) {
   # Melt matrix to long format
   # Convert matrix to data.table with SampleID
   dt_matrix <- as.data.table(npx_matrix, keep.rownames = "SampleID")
-  
+
   # Melt to long format: SampleID, Assay (protein), NPX
   samples_data_long <- melt(
     dt_matrix,
@@ -386,7 +390,7 @@ create_long_format_samples_data <- function(npx_matrix, metadata) {
   # Validate structure
   n_rows_expected <- n_samples * n_proteins
   n_rows_actual <- nrow(samples_data_long)
-  
+
   if (n_rows_actual != n_rows_expected) {
     log_warn("  Row count mismatch: expected {n_rows_expected}, got {n_rows_actual}")
   } else {
@@ -397,7 +401,7 @@ create_long_format_samples_data <- function(npx_matrix, metadata) {
   sample_counts <- samples_data_long[, .N, by = SampleID]
   expected_per_sample <- n_proteins
   mismatched_samples <- sample_counts[N != expected_per_sample]
-  
+
   if (nrow(mismatched_samples) > 0) {
     log_warn("  {nrow(mismatched_samples)} samples have incorrect protein counts")
   } else {
@@ -408,7 +412,7 @@ create_long_format_samples_data <- function(npx_matrix, metadata) {
   test_sample <- sample_ids[1]
   test_data <- samples_data_long[SampleID == test_sample]
   test_sd <- sd(test_data$NPX, na.rm = TRUE)
-  
+
   if (is.na(test_sd) || length(test_data$NPX) < 2) {
     log_error("  CRITICAL: Cannot calculate sd_npx - long-format structure is incorrect!")
     stop("Long-format samples_data_raw structure validation failed")
@@ -457,6 +461,48 @@ main <- function() {
   if (!is.null(bridging_samples_finngenid_map_file)) {
     bridging_finngenid_map <- load_bridging_finngenid_map(bridging_samples_finngenid_map_file)
   }
+
+  # Perform initial QC: Remove samples with >10% missing data
+  # This matches the original pipeline's Step 02 (02_initial_qc.R) functionality
+  log_info("Performing initial QC: filtering samples with >10% missing data")
+  initial_qc_threshold <- config$parameters$qc$max_missing_per_sample %||% 0.10
+
+  # Calculate missing rate per sample
+  sample_missing_rates <- rowSums(is.na(npx_matrix)) / ncol(npx_matrix)
+
+  # Identify samples failing initial QC
+  initial_qc_failed <- names(sample_missing_rates)[sample_missing_rates > initial_qc_threshold]
+
+  # Create QC summary for tracking (needed for comprehensive report)
+  qc_summary <- data.table(
+    SampleID = names(sample_missing_rates),
+    missing_rate = sample_missing_rates,
+    n_missing = rowSums(is.na(npx_matrix)),
+    n_measured = rowSums(!is.na(npx_matrix)),
+    QC_initial_qc = as.integer(sample_missing_rates > initial_qc_threshold),
+    qc_pass = sample_missing_rates <= initial_qc_threshold
+  )
+
+  if(length(initial_qc_failed) > 0) {
+    log_info("Removing {length(initial_qc_failed)} samples with >{initial_qc_threshold*100}% missing data")
+    log_info("  Failed samples: {paste(initial_qc_failed, collapse=', ')}")
+
+    # Remove failing samples from matrix
+    npx_matrix <- npx_matrix[!rownames(npx_matrix) %in% initial_qc_failed, ]
+
+    log_info("Matrix after initial QC: {nrow(npx_matrix)} samples (removed {length(initial_qc_failed)} samples)")
+  } else {
+    log_info("No samples failed initial QC (all samples have ≤{initial_qc_threshold*100}% missing data)")
+  }
+
+  # Save QC summary for comprehensive report integration
+  qc_summary_path <- get_output_path(step_num, "qc_summary", batch_id, "qc", "tsv", config = config)
+  ensure_output_dir(qc_summary_path)
+  fwrite(qc_summary, qc_summary_path, sep = "\t")
+  log_info("Saved initial QC summary: {qc_summary_path}")
+  log_info("  - Total samples evaluated: {nrow(qc_summary)}")
+  log_info("  - Samples passing QC: {sum(qc_summary$qc_pass)}")
+  log_info("  - Samples failing QC: {sum(!qc_summary$qc_pass)}")
 
   # Create sample mapping
   log_info("Creating sample mapping...")
@@ -566,10 +612,10 @@ main <- function() {
     mean_npx = mean(NPX, na.rm = TRUE),
     sd_npx = sd(NPX, na.rm = TRUE)
   ), by = SampleID]
-  
+
   n_valid_sd <- sum(!is.na(sample_stats_test$sd_npx))
   n_samples_total <- nrow(sample_stats_test)
-  
+
   if (n_valid_sd == n_samples_total) {
     log_info("  ✓ All {n_samples_total} samples have valid sd_npx (technical outlier detection will work)")
   } else {
@@ -580,10 +626,19 @@ main <- function() {
   # Print summary
   cat("\n=== DATA LOADER SUMMARY ===\n")
   cat("Input file format: ", detect_file_format(npx_matrix_file), "\n", sep = "")
-  cat("NPX matrix loaded: ", nrow(npx_matrix), " samples x ", ncol(npx_matrix), " proteins\n", sep = "")
+  n_samples_loaded <- nrow(qc_summary)
+  n_samples_after_qc <- nrow(npx_matrix)
+  n_initial_qc_failed <- sum(qc_summary$QC_initial_qc == 1)
+  cat("NPX matrix loaded: ", n_samples_loaded, " samples x ", ncol(npx_matrix), " proteins\n", sep = "")
+  if(n_initial_qc_failed > 0) {
+    cat("Initial QC: Removed ", n_initial_qc_failed, " samples with >10% missing data\n", sep = "")
+    cat("  Matrix after initial QC: ", n_samples_after_qc, " samples\n", sep = "")
+  } else {
+    cat("Initial QC: All samples passed (≤10% missing data)\n", sep = "")
+  }
   cat("Analysis-ready samples: ", nrow(analysis_samples), "\n", sep = "")
-  cat("Long-format samples_data_raw: ", nrow(samples_data_raw), " rows (", 
-      length(unique(samples_data_raw$SampleID)), " samples × ", 
+  cat("Long-format samples_data_raw: ", nrow(samples_data_raw), " rows (",
+      length(unique(samples_data_raw$SampleID)), " samples × ",
       length(unique(samples_data_raw$Assay)), " proteins)\n", sep = "")
   cat("Sample types:\n")
   print(table(sample_mapping$sample_type))

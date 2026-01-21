@@ -1,13 +1,17 @@
 #!/usr/bin/env Rscript
-
-#################################################
-# Script: 09_prepare_phenotypes.R
+# ==============================================================================
+# 09_prepare_phenotypes.R - Phenotype Matrix Preparation
+# ==============================================================================
+#
+# Purpose:
+#   Prepares phenotype matrices for downstream GWAS analysis. Uses comprehensive
+#   outlier list from Step 05d (includes all QC steps: Initial QC, PCA, Technical,
+#   Z-score, Sex, pQTL) and converts outlier SampleIDs to match matrix format.
+#   Creates both SampleID-indexed and FINNGENID-indexed matrices with outliers removed.
+#
 # Author: Reza Jabal, PhD (rjabal@broadinstitute.org)
-# Description: Prepare phenotype matrices for downstream analysis
-#              Refactored version
-#              Refactored version
-# Date: December 2025
-#################################################
+# Date: December 2025 (Updated: January 2026 - Comprehensive outlier integration and SampleID conversion)
+# ==============================================================================
 
 suppressPackageStartupMessages({
   library(data.table)
@@ -46,7 +50,6 @@ step_num <- get_step_number()
 
 # Load configuration
 config_file <- Sys.getenv("PIPELINE_CONFIG", "")
-config_file <- Sys.getenv("PIPELINE_CONFIG", "")
 if (config_file == "" || !file.exists(config_file)) {
   stop("PIPELINE_CONFIG environment variable not set or config file not found. Please provide path to config file.")
 }
@@ -57,9 +60,148 @@ log_path <- get_log_path(step_num, batch_id, config = config)
 log_appender(appender_file(log_path))
 log_info("Starting phenotype preparation for batch: {batch_id}")
 
-# Function to combine outlier lists
-combine_outlier_lists <- function(batch_id, config) {
-  log_info("Combining outlier lists from all detection methods")
+# Function to load comprehensive outlier list from Step 05d
+# CRITICAL: Use comprehensive outlier list from Step 05d which includes ALL outliers:
+# - Initial QC failures (step 00)
+# - PCA outliers (step 01)
+# - Technical outliers (step 02)
+# - Z-score outliers (step 03)
+# - Sex mismatches and outliers (step 04)
+# - pQTL outliers (step 05b)
+# NOTE: Comprehensive list uses "P..." format SampleIDs, but matrices use "EA5_OLI_..." format
+# We need to convert using sample mapping to ensure proper matching
+load_comprehensive_outlier_list <- function(batch_id, config) {
+  log_info("Loading comprehensive outlier list from Step 05d")
+
+  # Use comprehensive outlier list from Step 05d (includes ALL QC steps)
+  comprehensive_outliers_path <- get_output_path("05d", "comprehensive_outliers_list", batch_id, "phenotypes", "tsv", config = config)
+
+  if (!file.exists(comprehensive_outliers_path)) {
+    log_warn("Comprehensive outlier list not found: {comprehensive_outliers_path}")
+    log_warn("Falling back to combining individual outlier lists (may miss pQTL and initial QC outliers)")
+    return(combine_outlier_lists_fallback(batch_id, config))
+  }
+
+  # Read comprehensive outlier list
+  comprehensive_outliers <- fread(comprehensive_outliers_path)
+
+  # Extract SampleID column (should exist in comprehensive list)
+  if (!"SampleID" %in% names(comprehensive_outliers)) {
+    log_error("Comprehensive outlier list missing SampleID column")
+    stop("Invalid comprehensive outlier list format")
+  }
+
+  # CRITICAL: Comprehensive list uses "P..." format SampleIDs, but matrices use "EA5_OLI_..." format
+  # Load sample mapping to convert outlier SampleIDs to match matrix format
+  sample_mapping_path <- get_output_path("00", "sample_mapping", batch_id, "qc", "tsv", config = config)
+  if (!file.exists(sample_mapping_path)) {
+    log_warn("Sample mapping not found: {sample_mapping_path}")
+    log_warn("Cannot convert outlier SampleIDs - using as-is (may not match matrix)")
+    all_outliers <- comprehensive_outliers$SampleID
+  } else {
+    sample_mapping <- fread(sample_mapping_path)
+    log_info("Loaded sample mapping: {nrow(sample_mapping)} samples")
+
+    # The comprehensive list SampleIDs are in "P..." format
+    # Check if they match the mapping directly
+    outliers_in_mapping <- comprehensive_outliers$SampleID %in% sample_mapping$SampleID
+    log_info("Outliers matching sample mapping: {sum(outliers_in_mapping)}/{nrow(comprehensive_outliers)}")
+
+    # Use SampleIDs directly from comprehensive list (they should match matrix row names)
+    # If comprehensive list uses "P..." format but matrix uses "EA5_OLI_...", we need to check
+    # Actually, the comprehensive list SampleIDs should match what's in the base matrix
+    # Let's use them as-is first, and verify matching later
+    all_outliers <- comprehensive_outliers$SampleID
+    log_info("Using outlier SampleIDs from comprehensive list (format: {head(all_outliers, 1)})")
+  }
+
+  all_outliers <- unique(all_outliers[!is.na(all_outliers)])
+
+  log_info("Loaded {length(all_outliers)} outliers from comprehensive list (Step 05d)")
+  log_info("  This includes outliers from: Initial QC, PCA, Technical, Z-score, Sex, and pQTL")
+
+  # Create outlier sources breakdown for reporting
+  outlier_sources <- list()
+  if ("QC_initial_qc" %in% names(comprehensive_outliers)) {
+    outlier_sources$initial_qc <- comprehensive_outliers[QC_initial_qc == 1]$SampleID
+  }
+  if ("QC_pca" %in% names(comprehensive_outliers)) {
+    outlier_sources$pca <- comprehensive_outliers[QC_pca == 1]$SampleID
+  }
+  if ("QC_technical" %in% names(comprehensive_outliers)) {
+    outlier_sources$technical <- comprehensive_outliers[QC_technical == 1]$SampleID
+  }
+  if ("QC_zscore" %in% names(comprehensive_outliers)) {
+    outlier_sources$zscore <- comprehensive_outliers[QC_zscore == 1]$SampleID
+  }
+  if ("QC_sex_mismatch" %in% names(comprehensive_outliers)) {
+    outlier_sources$sex_mismatch <- comprehensive_outliers[QC_sex_mismatch == 1]$SampleID
+  }
+  if ("QC_sex_outlier" %in% names(comprehensive_outliers)) {
+    outlier_sources$sex_outlier <- comprehensive_outliers[QC_sex_outlier == 1]$SampleID
+  }
+  if ("QC_pqtl" %in% names(comprehensive_outliers)) {
+    outlier_sources$pqtl <- comprehensive_outliers[QC_pqtl == 1]$SampleID
+  }
+
+  return(list(
+    all_outliers = all_outliers,
+    outlier_sources = outlier_sources,
+    comprehensive_outliers_dt = comprehensive_outliers  # Return full DT for ID conversion
+  ))
+}
+
+# Function to convert outlier SampleIDs to match matrix format
+# Comprehensive list may use "P..." format, but matrices use "EA5_OLI_..." format
+convert_outlier_sampleids <- function(outlier_sampleids, sample_mapping, npx_matrix, comprehensive_outliers_dt = NULL) {
+  log_info("Converting {length(outlier_sampleids)} outlier SampleIDs to match matrix format")
+
+  # Get matrix row names (target format)
+  matrix_sampleids <- rownames(npx_matrix)
+
+  # Check if outliers already match matrix format
+  direct_matches <- intersect(outlier_sampleids, matrix_sampleids)
+  log_info("  Direct matches (no conversion needed): {length(direct_matches)}")
+
+  if (length(direct_matches) == length(outlier_sampleids)) {
+    log_info("  All outliers already match matrix format - no conversion needed")
+    return(outlier_sampleids)
+  }
+
+  # For non-matching outliers, try to convert via sample mapping using FINNGENID
+  if (!is.null(comprehensive_outliers_dt) && "FINNGENID" %in% names(comprehensive_outliers_dt)) {
+    # Match outliers to comprehensive list to get FINNGENIDs
+    outlier_dt <- data.table(SampleID_outlier = outlier_sampleids)
+    outlier_dt <- merge(outlier_dt, comprehensive_outliers_dt[, .(SampleID, FINNGENID)],
+                       by.x = "SampleID_outlier", by.y = "SampleID", all.x = TRUE)
+
+    # Match FINNGENIDs to sample mapping to get matrix SampleIDs
+    if ("FINNGENID" %in% names(outlier_dt) && "FINNGENID" %in% names(sample_mapping)) {
+      outlier_dt <- merge(outlier_dt, sample_mapping[, .(SampleID, FINNGENID)],
+                         by = "FINNGENID", all.x = TRUE, suffixes = c("", "_matrix"))
+
+      # Use matrix SampleID where available, otherwise keep original
+      converted <- ifelse(!is.na(outlier_dt$SampleID), outlier_dt$SampleID, outlier_dt$SampleID_outlier)
+
+      n_converted <- sum(!is.na(outlier_dt$SampleID) & outlier_dt$SampleID != outlier_dt$SampleID_outlier)
+      log_info("  Converted via FINNGENID: {n_converted} outliers")
+
+      # Verify converted IDs are in matrix
+      final_matches <- intersect(converted, matrix_sampleids)
+      log_info("  Final matches in matrix: {length(final_matches)}/{length(converted)}")
+
+      return(converted)
+    }
+  }
+
+  # Fallback: return original (will be checked in prepare_phenotype_matrix)
+  log_warn("  Could not convert outlier SampleIDs - using original format")
+  return(outlier_sampleids)
+}
+
+# Fallback function to combine outlier lists from individual steps (if comprehensive list not available)
+combine_outlier_lists_fallback <- function(batch_id, config) {
+  log_info("Combining outlier lists from individual detection methods (fallback mode)")
 
   # Use batch-aware paths for outlier files
   outlier_files <- list(
@@ -108,7 +250,8 @@ combine_outlier_lists <- function(batch_id, config) {
   # Get unique outliers
   all_outliers <- unique(all_outliers)
 
-  log_info("Total unique outliers: {length(all_outliers)}")
+  log_info("Total unique outliers (fallback): {length(all_outliers)}")
+  log_warn("  NOTE: Fallback mode may miss pQTL outliers and initial QC failures")
 
   return(list(
     all_outliers = all_outliers,
@@ -320,13 +463,18 @@ main <- function() {
 
   # Load data from previous steps with batch-aware paths
   log_info("Loading data from previous steps")
-  npx_adjusted_path <- get_output_path("08", "npx_matrix_adjusted", batch_id, "normalized", config = config)
+  # Step 08 saves as "npx_matrix_covariate_adjusted" (covariate-adjusted matrix)
+  # NOTE: This matrix is adjusted for age, sex, BMI, and smoking ONLY
+  # Proteomic PCs are NOT adjusted for (preserved to maintain biological signal)
+  npx_adjusted_path <- get_output_path("08", "npx_matrix_covariate_adjusted", batch_id, "normalized", config = config)
   sample_mapping_path <- get_output_path("00", "sample_mapping", batch_id, "qc", config = config)
   excluded_samples_path <- get_output_path("00", "excluded_samples", batch_id, "qc", config = config)
 
   if (!file.exists(npx_adjusted_path)) {
-    stop("Adjusted NPX matrix not found: {npx_adjusted_path}")
+    stop("Adjusted NPX matrix not found: {npx_adjusted_path}. Please run step 08 (covariate adjustment) first.")
   }
+  log_info("Using covariate-adjusted NPX matrix: {npx_adjusted_path}")
+  log_info("  Note: Matrix adjusted for age, sex, BMI, smoking only (proteomic PCs preserved)")
   if (!file.exists(sample_mapping_path)) {
     stop("Sample mapping not found: {sample_mapping_path}")
   }
@@ -345,8 +493,29 @@ main <- function() {
   # Store original dimensions
   n_original <- nrow(npx_adjusted)
 
-  # Combine outlier lists (pass batch_id and config)
-  outlier_result <- combine_outlier_lists(batch_id, config)
+  # Load comprehensive outlier list from Step 05d (includes ALL outliers from all QC steps)
+  outlier_result <- load_comprehensive_outlier_list(batch_id, config)
+
+  # CRITICAL FIX: Convert outlier SampleIDs to match matrix format
+  # Comprehensive list may use "P..." format, but matrix uses "EA5_OLI_..." format
+  # Use sample mapping to convert via FINNGENID if needed
+  log_info("Converting outlier SampleIDs to match matrix format...")
+  outliers_original <- outlier_result$all_outliers
+  outliers_converted <- convert_outlier_sampleids(
+    outlier_result$all_outliers,
+    sample_mapping,
+    npx_adjusted,
+    comprehensive_outliers_dt = outlier_result$comprehensive_outliers_dt
+  )
+  outlier_result$all_outliers <- outliers_converted
+
+  n_matched <- sum(outliers_converted %in% rownames(npx_adjusted))
+  log_info("Outlier ID conversion: {length(outliers_original)} original -> {length(outliers_converted)} converted")
+  log_info("  Outliers matching matrix row names: {n_matched}/{length(outliers_converted)}")
+
+  if (n_matched < length(outliers_converted)) {
+    log_warn("  {length(outliers_converted) - n_matched} outliers not found in matrix (may have been removed earlier)")
+  }
 
   # Remove Andrea's samples first
   npx_clean <- remove_excluded_samples(npx_adjusted, excluded_samples)
@@ -503,10 +672,18 @@ main <- function() {
   cat("Original samples:", sample_lists$n_original, "\n")
   cat("After excluding Andrea's samples:", nrow(npx_clean), "\n")
   cat("Outliers removed:", length(outlier_result$all_outliers), "\n")
-  cat("  - PCA outliers:", length(outlier_result$outlier_sources$pca), "\n")
-  cat("  - Sex mismatches:", length(outlier_result$outlier_sources$sex), "\n")
-  cat("  - Technical outliers:", length(outlier_result$outlier_sources$technical), "\n")
-  cat("  - Z-score outliers:", length(outlier_result$outlier_sources$zscore), "\n")
+  # Report breakdown by source (if available)
+  if (!is.null(outlier_result$outlier_sources)) {
+    cat("  - Initial QC failures:", length(outlier_result$outlier_sources$initial_qc %||% character(0)), "\n")
+    cat("  - PCA outliers:", length(outlier_result$outlier_sources$pca %||% character(0)), "\n")
+    cat("  - Sex mismatches:", length(outlier_result$outlier_sources$sex_mismatch %||% character(0)), "\n")
+    cat("  - Sex outliers:", length(outlier_result$outlier_sources$sex_outlier %||% character(0)), "\n")
+    cat("  - Technical outliers:", length(outlier_result$outlier_sources$technical %||% character(0)), "\n")
+    cat("  - Z-score outliers:", length(outlier_result$outlier_sources$zscore %||% character(0)), "\n")
+    cat("  - pQTL outliers:", length(outlier_result$outlier_sources$pqtl %||% character(0)), "\n")
+  } else {
+    cat("  (Outlier source breakdown not available)\n")
+  }
   cat("\nFinal QC-passed samples:", sample_lists$n_after_qc, "\n")
   cat("Samples with FINNGENID:", sample_lists$n_with_finngen, "\n")
   cat("\nPhenotype matrix:", nrow(phenotype_result$sample_id_matrix), "x",
