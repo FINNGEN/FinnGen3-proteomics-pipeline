@@ -2,7 +2,7 @@
 
 **Platform**: Olink Explore HT (5K)
 
-**Version**: 1.2.1
+**Version**: 1.0.0
 
 **Release Date**: January 2026
 
@@ -830,7 +830,7 @@ If you use this pipeline, please cite:
 
 - **Pipeline**: FinnGen 3 Olink Proteomics Analysis Pipeline
 - **Author**: Reza Jabal, PhD (rjabal@broadinstitute.org)
-- **Version**: 1.2.1
+- **Version**: 1.0.0
 - **Release Date**: January 2026
 - **Platform**: Olink Explore HT (5K)
 
