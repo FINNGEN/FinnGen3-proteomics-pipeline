@@ -1,6 +1,6 @@
 {
   "name": "fg3-olink-pipeline",
-  "version": "1.2.1",
+  "version": "0.0.0-development",
   "description": "FinnGen 3 Olink Proteomics Analysis Pipeline - Automated Release Configuration",
   "private": true,
   "scripts": {
