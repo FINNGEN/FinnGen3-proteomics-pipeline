@@ -25,6 +25,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          fetch-tags: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
@@ -43,6 +44,12 @@ jobs:
             npm install --package-lock-only
             npm install
           fi
+
+      - name: Fetch all tags
+        run: |
+          git fetch --tags --force
+          echo "Available tags:"
+          git tag -l | sort -V || echo "No tags found"
 
       - name: Run semantic-release
         id: semantic-release
