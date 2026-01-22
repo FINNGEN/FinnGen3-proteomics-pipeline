@@ -237,10 +237,8 @@ run_pqtl_training <- function(config = NULL, batch_id = NULL, verbose = FALSE) {
     step_suffix <- "05a"
     step_name <- "pqtl_training"
 
-    # Set up logging
-    log_dir <- file.path(config$output$base_dir, config$output$logs_dir %||% "logs", batch_id)
-    dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
-    log_file <- file.path(log_dir, paste0(step_num, "_", step_suffix, "_", step_name, ".log"))
+    # Set up logging (use get_log_path for consistency)
+    log_file <- get_log_path(step_num, batch_id, config = config)
     ensure_output_dir(log_file)
     log_appender(appender_file(log_file))
 

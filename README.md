@@ -836,14 +836,14 @@ If you use this pipeline, please cite:
 
 ## Versioning and Releases
 
-This project uses **Semantic Release** with **Conventional Commits** for automated versioning and releases. 
+This project uses **Semantic Release** with **Conventional Commits** for automated versioning and releases.
 
 ### How to Trigger a Release
 
 Simply commit your changes using [Conventional Commits](https://www.conventionalcommits.org/) format:
 
 - **`fix:`** → Patch release (1.2.1 → 1.2.2) - Bug fixes
-- **`feat:`** → Minor release (1.2.1 → 1.3.0) - New features  
+- **`feat:`** → Minor release (1.2.1 → 1.3.0) - New features
 - **`BREAKING CHANGE:`** → Major release (1.2.1 → 2.0.0) - Breaking changes
 
 **Examples:**

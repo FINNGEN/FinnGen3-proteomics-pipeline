@@ -111,19 +111,17 @@ if (!test_enabled) {
 batch_id <- Sys.getenv("PIPELINE_BATCH_ID", config$batch$default_batch_id %||% "batch_01")
 step_num <- "05c"
 
-# Set up logging - write to logs directory (primary)
+# Set up logging - use get_log_path for batch-aware logging
 # Override log filename to use 05_05c format (matching other 05* scripts)
-base_dir <- config$output$base_dir %||% Sys.getenv("PIPELINE_OUTPUT_DIR", "output")
-log_dir <- file.path(base_dir, config$output$logs_dir %||% "logs")
-if (tryCatch(isTRUE(config$parameters$normalization$multi_batch_mode), error = function(e) FALSE) && !is.null(batch_id)) {
-    log_dir <- file.path(log_dir, batch_id)
-}
-log_path <- file.path(log_dir, "05_05c_governance_test.log")
+log_path <- get_log_path(step_num, batch_id, config = config)
+# Replace the auto-generated filename with the correct format
+log_dir <- dirname(log_path)
+log_path <- file.path(log_dir, "05_05c_provenance_test.log")
 ensure_output_dir(log_path)
 log_appender(appender_file(log_path))
 
 # Also create a copy in test-case directory for convenience
-test_case_log_path <- get_output_path(step_num, "governance_test", batch_id, "test-case", "log", config = config)
+test_case_log_path <- get_output_path(step_num, "provenance_test", batch_id, "test-case", "log", config = config)
 ensure_output_dir(test_case_log_path)
 
 # Create a custom appender that writes to both files
@@ -135,7 +133,7 @@ dual_appender <- function(msg) {
 }
 
 # Use file appender for primary, and we'll copy the log at the end
-log_info("Starting governance component validation test for batch: {batch_id}")
+log_info("Starting provenance component validation test for batch: {batch_id}")
 
 # Get test configuration
 test_config <- tryCatch(config$test_case, error = function(e) NULL)
@@ -994,7 +992,7 @@ create_meanabsz_vs_distance_plot <- function(
 # This implements sex and pQTL detection directly without sourcing the production scripts
 run_validation_tests <- function(synthetic_npx_path, synthetic_metadata_path, ground_truth,
                                   batch_id, config, test_output_dir) {
-    log_info("=== GOVERNANCE TEST: Running Validation Tests (Direct Implementation) ===")
+    log_info("=== PROVENANCE TEST: Running Validation Tests (Direct Implementation) ===")
     log_info("Running validation tests on synthetic dataset...")
 
     # Direct implementation - no file replacement needed
@@ -1419,7 +1417,7 @@ run_validation_tests <- function(synthetic_npx_path, synthetic_metadata_path, gr
                 top_variants <- fread(collated_path)
                 log_info("Loaded {nrow(top_variants)} variants from collated fine-mapping results")
 
-                # Apply MAF filter if configured (for governance test)
+                # Apply MAF filter if configured (for provenance test)
                 pqtl_selection_config <- tryCatch(test_config$pqtl_selection, error = function(e) NULL)
                 min_maf_threshold <- tryCatch(
                     pqtl_selection_config$min_maf %||% NULL,
@@ -2740,7 +2738,7 @@ apply_category3_swaps <- function(
 }
 
 main <- function() {
-    log_info("=== GOVERNANCE TEST: Data Preparation ===")
+    log_info("=== PROVENANCE TEST: Data Preparation ===")
 
     # 1. Load required data
     # --------------------
@@ -2970,7 +2968,7 @@ main <- function() {
 
     # 2. Select 110 samples meeting criteria with genotype stratification
     # --------------------------------------------------------------------
-    log_info("=== GOVERNANCE TEST: Sample Selection and Stratification ===")
+    log_info("=== PROVENANCE TEST: Sample Selection and Stratification ===")
 
     # Filter metadata to samples in NPX matrix
     sample_ids <- rownames(npx_matrix)
@@ -3067,7 +3065,7 @@ main <- function() {
 
     # 3. Create synthetic dataset with three-category error structure
     # ----------------------------------------------------------------
-    log_info("=== GOVERNANCE TEST: Introducing Controlled Errors ===")
+    log_info("=== PROVENANCE TEST: Introducing Controlled Errors ===")
 
     # Create synthetic dataset directory
     # Use dirname to get directory path (get_output_path returns a file path)
@@ -3203,7 +3201,7 @@ main <- function() {
 
     # 4. Save synthetic dataset with explicit error indicators in filenames
     # --------------------------------------------------------------------
-    log_info("=== GOVERNANCE TEST: Saving Synthetic Dataset ===")
+    log_info("=== PROVENANCE TEST: Saving Synthetic Dataset ===")
 
     # Create synthetic dataset directory (if not already created)
     # Use dirname to get directory path (get_output_path returns a file path)
@@ -3327,7 +3325,7 @@ main <- function() {
 
     # 5. Create Ground Truth Reference File
     # ---------------------------------------
-    log_info("=== GOVERNANCE TEST: Creating Ground Truth Reference ===")
+    log_info("=== PROVENANCE TEST: Creating Ground Truth Reference ===")
 
     # Create ground truth with expected detection flags
     ground_truth <- copy(error_tracking)
@@ -3384,7 +3382,7 @@ main <- function() {
     n_both_errors_actual <- n_category3_actual  # Category 3: both genotype and sex
 
     summary_text <- paste0(
-        "Governance Test Case Summary\n",
+        "Provenance Test Case Summary\n",
         "===========================\n\n",
         "Test Configuration:\n",
         "  Random seed: ", test_seed, "\n",
@@ -3502,7 +3500,7 @@ main <- function() {
     writeLines(error_log_lines, error_log_path)
     log_info("Saved error introduction log: {error_log_path}")
 
-    log_info("=== GOVERNANCE TEST: Synthetic Dataset Created ===")
+    log_info("=== PROVENANCE TEST: Synthetic Dataset Created ===")
     log_info("Test dataset saved to: {test_output_dir}")
     log_info("")
     log_info("Generated Files:")
@@ -3514,7 +3512,7 @@ main <- function() {
     log_info("")
 
     # Run validation tests on synthetic dataset
-    log_info("=== GOVERNANCE TEST: Running Validation Tests ===")
+    log_info("=== PROVENANCE TEST: Running Validation Tests ===")
     validation_result <- run_validation_tests(
         synthetic_npx_path = npx_synthetic_path,
         synthetic_metadata_path = metadata_synthetic_path,
@@ -3524,7 +3522,7 @@ main <- function() {
         test_output_dir = test_output_dir
     )
 
-    log_info("=== GOVERNANCE TEST: Validation Complete ===")
+    log_info("=== PROVENANCE TEST: Validation Complete ===")
     log_info("Validation results:")
     log_info("  - Sex outliers detected: {validation_result$n_sex_detected} / {validation_result$n_sex_expected}")
     log_info("  - pQTL outliers detected: {validation_result$n_pqtl_detected} / {validation_result$n_pqtl_expected}")
@@ -3568,6 +3566,6 @@ if (test_enabled) {
         }
     })
     
-    log_info("Governance test case generation completed successfully")
+    log_info("Provenance test case generation completed successfully")
     log_info("Test case directory: {result$test_output_dir}")
 }

@@ -25,7 +25,9 @@
           "VERSION",
           "Dockerfile",
           "README.md",
-          "CHANGELOG.md"
+          "CHANGELOG.md",
+          "docs/DATA_RELEASE_NOTE_Dec_2025_v2.1.md",
+          "docs/DATA_RELEASE_NOTE_Dec_2025_v2.1.tex"
         ],
         "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
       }

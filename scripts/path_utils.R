@@ -168,7 +168,9 @@ get_log_path <- function(step_num, batch_id = NULL, config = NULL) {
   # Construct log path
   log_dir <- file.path(base_dir, config$output$logs_dir %||% "logs")
 
-  if (multi_batch_mode && !is.null(batch_id)) {
+  # Always add batch_id to log directory if provided (for batch-aware logging)
+  # This ensures logs are organized by batch even in single-batch mode
+  if (!is.null(batch_id) && batch_id != "") {
     log_dir <- file.path(log_dir, batch_id)
   }
 

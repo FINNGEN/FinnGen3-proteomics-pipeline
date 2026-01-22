@@ -5,6 +5,7 @@
 # - VERSION file
 # - Dockerfile (LABEL version and comment)
 # - README.md (version references)
+# - Documentation files (docs/*.md and docs/*.tex) - pipeline version references
 #
 # Usage: ./scripts/sync_version.sh <version>
 # Example: ./scripts/sync_version.sh 1.2.2
@@ -50,6 +51,27 @@ if [ -f "README.md" ]; then
     sed -i "s/\*\*Version\*\*: [0-9.]*/**Version**: ${VERSION_CLEAN}/" README.md
     
     echo "✓ Updated README.md"
+fi
+
+# 4. Update documentation files (docs/)
+if [ -d "docs" ]; then
+    # Update pipeline version in markdown files
+    find docs -name "*.md" -type f | while read -r file; do
+        # Update "Pipeline version: vX.X.X" patterns
+        sed -i "s/Pipeline version: v[0-9.]*/Pipeline version: v${VERSION_CLEAN}/g" "$file"
+        # Update "**Pipeline Version**: vX.X.X" patterns
+        sed -i "s/\*\*Pipeline Version\*\*: v[0-9.]*/\*\*Pipeline Version\*\*: v${VERSION_CLEAN}/g" "$file"
+    done
+    
+    # Update pipeline version in LaTeX files
+    find docs -name "*.tex" -type f | while read -r file; do
+        # Update "Pipeline version: vX.X.X" patterns
+        sed -i "s/Pipeline version: v[0-9.]*/Pipeline version: v${VERSION_CLEAN}/g" "$file"
+        # Update "\textbf{Pipeline Version}: vX.X.X" patterns
+        sed -i "s/\\\\textbf{Pipeline Version}: v[0-9.]*/\\\\textbf{Pipeline Version}: v${VERSION_CLEAN}/g" "$file"
+    done
+    
+    echo "✓ Updated documentation files"
 fi
 
 echo "Version synchronization complete: ${VERSION_CLEAN}"

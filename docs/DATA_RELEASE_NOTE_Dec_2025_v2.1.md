@@ -150,7 +150,7 @@ These differences are primarily due to:
 - Different constant protein removal (0 vs 8) affecting PCA calculations
 - Sex outlier detection discrepancy: 5 found vs 13 expected (investigation ongoing - may be due to Youden threshold difference: 0.63 vs 0.71)
 
-All thresholds match the original implementation (5×SD for PCA, 5×MAD for technical, 4×SD for Z-score and pQTL). Pipeline version: v1.2.1.
+All thresholds match the original implementation (5×SD for PCA, 5×MAD for technical, 4×SD for Z-score and pQTL). Pipeline version: v1.2.1
 
 ---
 

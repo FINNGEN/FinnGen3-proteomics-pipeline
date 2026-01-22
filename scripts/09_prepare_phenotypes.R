@@ -259,9 +259,9 @@ combine_outlier_lists_fallback <- function(batch_id, config) {
   ))
 }
 
-# Function to remove Andrea's samples
+# Function to remove non-FinnGen samples
 remove_excluded_samples <- function(npx_matrix, excluded_samples) {
-  log_info("Removing excluded samples (Andrea's samples)")
+  log_info("Removing excluded samples (non-FinnGen samples)")
 
   # Get samples to exclude
   samples_to_remove <- intersect(rownames(npx_matrix), excluded_samples$SAMPLE_ID)
@@ -517,7 +517,7 @@ main <- function() {
     log_warn("  {length(outliers_converted) - n_matched} outliers not found in matrix (may have been removed earlier)")
   }
 
-  # Remove Andrea's samples first
+  # Remove non-FinnGen samples first
   npx_clean <- remove_excluded_samples(npx_adjusted, excluded_samples)
   log_info("After removing excluded samples: {nrow(npx_clean)} samples")
 
@@ -600,7 +600,7 @@ main <- function() {
 
   # Save summary
   summary_stats <- data.table(
-    stage = c("Original", "After excluding Andrea samples", "After removing outliers", "With FINNGENID"),
+    stage = c("Original", "After excluding non-FinnGen samples", "After removing outliers", "With FINNGENID"),
     n_samples = c(sample_lists$n_original, nrow(npx_clean),
                  sample_lists$n_after_qc, sample_lists$n_with_finngen)
   )
@@ -670,7 +670,7 @@ main <- function() {
   # Print summary
   cat("\n=== PHENOTYPE PREPARATION SUMMARY ===\n")
   cat("Original samples:", sample_lists$n_original, "\n")
-  cat("After excluding Andrea's samples:", nrow(npx_clean), "\n")
+  cat("After excluding non-FinnGen samples:", nrow(npx_clean), "\n")
   cat("Outliers removed:", length(outlier_result$all_outliers), "\n")
   # Report breakdown by source (if available)
   if (!is.null(outlier_result$outlier_sources)) {

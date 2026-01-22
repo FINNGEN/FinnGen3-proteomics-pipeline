@@ -182,24 +182,57 @@ create_comprehensive_outlier_tracking_plot <- function(all_samples) {
     # 3. Overlap patterns (Venn diagram style) - including all methods
     # All QC columns should exist at this point (created/initialized above)
     # Use direct column access - columns are guaranteed to exist after initialization
+    # Calculate specific method combinations (matching original implementation)
+    # Create helper columns for Sex_Any (either mismatch or outlier)
+    all_samples[, Sex_Any := as.integer(QC_sex_mismatch == 1 | QC_sex_outlier == 1)]
+    
     overlap_summary <- all_samples[, .(
-        InitialQC_only = sum(QC_initial_qc == 1 & QC_pca == 0 & QC_sex_mismatch == 0 &
-                            QC_sex_outlier == 0 & QC_technical == 0 & QC_zscore == 0 & QC_pqtl == 0, na.rm = TRUE),
-        PCA_only = sum(QC_initial_qc == 0 & QC_pca == 1 & QC_sex_mismatch == 0 &
-                      QC_sex_outlier == 0 & QC_technical == 0 & QC_zscore == 0 & QC_pqtl == 0, na.rm = TRUE),
-        SexMismatch_only = sum(QC_initial_qc == 0 & QC_pca == 0 & QC_sex_mismatch == 1 &
-                               QC_sex_outlier == 0 & QC_technical == 0 & QC_zscore == 0 & QC_pqtl == 0, na.rm = TRUE),
-        SexOutlier_only = sum(QC_initial_qc == 0 & QC_pca == 0 & QC_sex_mismatch == 0 &
-                             QC_sex_outlier == 1 & QC_technical == 0 & QC_zscore == 0 & QC_pqtl == 0, na.rm = TRUE),
-        Technical_only = sum(QC_initial_qc == 0 & QC_pca == 0 & QC_sex_mismatch == 0 &
-                           QC_sex_outlier == 0 & QC_technical == 1 & QC_zscore == 0 & QC_pqtl == 0, na.rm = TRUE),
-        Zscore_only = sum(QC_initial_qc == 0 & QC_pca == 0 & QC_sex_mismatch == 0 &
-                         QC_sex_outlier == 0 & QC_technical == 0 & QC_zscore == 1 & QC_pqtl == 0, na.rm = TRUE),
-        pQTL_only = sum(QC_initial_qc == 0 & QC_pca == 0 & QC_sex_mismatch == 0 &
-                       QC_sex_outlier == 0 & QC_technical == 0 & QC_zscore == 0 & QC_pqtl == 1, na.rm = TRUE),
-        Two_Methods = sum(N_Methods == 2, na.rm = TRUE),
-        Three_Methods = sum(N_Methods == 3, na.rm = TRUE),
-        Four_Plus_Methods = sum(N_Methods >= 4, na.rm = TRUE)
+        # Single method only
+        InitialQC_only = sum(QC_initial_qc == 1 & QC_pca == 0 & Sex_Any == 0 &
+                            QC_technical == 0 & QC_zscore == 0 & QC_pqtl == 0, na.rm = TRUE),
+        PCA_only = sum(QC_initial_qc == 0 & QC_pca == 1 & Sex_Any == 0 &
+                      QC_technical == 0 & QC_zscore == 0 & QC_pqtl == 0, na.rm = TRUE),
+        Sex_only = sum(QC_initial_qc == 0 & QC_pca == 0 & Sex_Any == 1 &
+                      QC_technical == 0 & QC_zscore == 0 & QC_pqtl == 0, na.rm = TRUE),
+        Technical_only = sum(QC_initial_qc == 0 & QC_pca == 0 & Sex_Any == 0 &
+                           QC_technical == 1 & QC_zscore == 0 & QC_pqtl == 0, na.rm = TRUE),
+        Zscore_only = sum(QC_initial_qc == 0 & QC_pca == 0 & Sex_Any == 0 &
+                         QC_technical == 0 & QC_zscore == 1 & QC_pqtl == 0, na.rm = TRUE),
+        pQTL_only = sum(QC_initial_qc == 0 & QC_pca == 0 & Sex_Any == 0 &
+                       QC_technical == 0 & QC_zscore == 0 & QC_pqtl == 1, na.rm = TRUE),
+        # Two-method combinations
+        InitialQC_PCA = sum(QC_initial_qc == 1 & QC_pca == 1 & Sex_Any == 0 &
+                           QC_technical == 0 & QC_zscore == 0 & QC_pqtl == 0, na.rm = TRUE),
+        InitialQC_Sex = sum(QC_initial_qc == 1 & QC_pca == 0 & Sex_Any == 1 &
+                           QC_technical == 0 & QC_zscore == 0 & QC_pqtl == 0, na.rm = TRUE),
+        InitialQC_Technical = sum(QC_initial_qc == 1 & QC_pca == 0 & Sex_Any == 0 &
+                                 QC_technical == 1 & QC_zscore == 0 & QC_pqtl == 0, na.rm = TRUE),
+        InitialQC_Zscore = sum(QC_initial_qc == 1 & QC_pca == 0 & Sex_Any == 0 &
+                              QC_technical == 0 & QC_zscore == 1 & QC_pqtl == 0, na.rm = TRUE),
+        InitialQC_pQTL = sum(QC_initial_qc == 1 & QC_pca == 0 & Sex_Any == 0 &
+                            QC_technical == 0 & QC_zscore == 0 & QC_pqtl == 1, na.rm = TRUE),
+        PCA_Sex = sum(QC_initial_qc == 0 & QC_pca == 1 & Sex_Any == 1 &
+                     QC_technical == 0 & QC_zscore == 0 & QC_pqtl == 0, na.rm = TRUE),
+        PCA_Technical = sum(QC_initial_qc == 0 & QC_pca == 1 & Sex_Any == 0 &
+                          QC_technical == 1 & QC_zscore == 0 & QC_pqtl == 0, na.rm = TRUE),
+        PCA_Zscore = sum(QC_initial_qc == 0 & QC_pca == 1 & Sex_Any == 0 &
+                        QC_technical == 0 & QC_zscore == 1 & QC_pqtl == 0, na.rm = TRUE),
+        PCA_pQTL = sum(QC_initial_qc == 0 & QC_pca == 1 & Sex_Any == 0 &
+                      QC_technical == 0 & QC_zscore == 0 & QC_pqtl == 1, na.rm = TRUE),
+        Sex_Technical = sum(QC_initial_qc == 0 & QC_pca == 0 & Sex_Any == 1 &
+                           QC_technical == 1 & QC_zscore == 0 & QC_pqtl == 0, na.rm = TRUE),
+        Sex_Zscore = sum(QC_initial_qc == 0 & QC_pca == 0 & Sex_Any == 1 &
+                        QC_technical == 0 & QC_zscore == 1 & QC_pqtl == 0, na.rm = TRUE),
+        Sex_pQTL = sum(QC_initial_qc == 0 & QC_pca == 0 & Sex_Any == 1 &
+                      QC_technical == 0 & QC_zscore == 0 & QC_pqtl == 1, na.rm = TRUE),
+        Technical_Zscore = sum(QC_initial_qc == 0 & QC_pca == 0 & Sex_Any == 0 &
+                              QC_technical == 1 & QC_zscore == 1 & QC_pqtl == 0, na.rm = TRUE),
+        Technical_pQTL = sum(QC_initial_qc == 0 & QC_pca == 0 & Sex_Any == 0 &
+                            QC_technical == 1 & QC_zscore == 0 & QC_pqtl == 1, na.rm = TRUE),
+        Zscore_pQTL = sum(QC_initial_qc == 0 & QC_pca == 0 & Sex_Any == 0 &
+                         QC_technical == 0 & QC_zscore == 1 & QC_pqtl == 1, na.rm = TRUE),
+        # Three or more methods
+        Three_plus = sum(N_Methods >= 3, na.rm = TRUE)
     )]
 
     overlap_long <- data.table(
