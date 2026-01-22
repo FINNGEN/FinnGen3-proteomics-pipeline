@@ -2799,7 +2799,7 @@ main <- function() {
         top_variants <- fread(collated_path)
         log_info("Loaded {nrow(top_variants)} variants from collated file")
 
-        # Apply MAF filter if configured (for governance test)
+                # Apply MAF filter if configured (for provenance test)
         pqtl_selection_config <- tryCatch(test_config$pqtl_selection, error = function(e) NULL)
         min_maf_threshold <- tryCatch(
             pqtl_selection_config$min_maf %||% NULL,

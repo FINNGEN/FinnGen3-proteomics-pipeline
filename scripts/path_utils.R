@@ -176,7 +176,7 @@ get_log_path <- function(step_num, batch_id = NULL, config = NULL) {
 
   log_filename <- paste0(
     step_num, "_", gsub(
-      "^[0-9]+_", "",
+      "^[0-9]+[a-z]*_", "",  # Match step numbers like "05", "05a", "05b", "05c"
       gsub(
         "\\.R$", "",
         basename(Sys.getenv("SCRIPT_NAME", "script"))
