@@ -150,10 +150,10 @@ These differences are primarily due to:
 - Different constant protein removal (0 vs 8) affecting PCA calculations
 - Sex outlier detection discrepancy: 5 found vs 13 expected (investigation ongoing - may be due to Youden threshold difference: 0.63 vs 0.71)
 
-All thresholds match the original implementation (5×SD for PCA, 5×MAD for technical, 4×SD for Z-score and pQTL). Pipeline version: v1.2.1
+All thresholds match the original implementation (5×SD for PCA, 5×MAD for technical, 4×SD for Z-score and pQTL). Pipeline version: v1.0.0
 
 ---
 
-**Pipeline Version**: v1.2.1 (January 2026 - Refactored)
+**Pipeline Version**: v1.0.0 (January 2026 - Refactored)
 **Data Release**: FG3 Batch 2
 **Final Sample Count**: 2,452 samples × 5,416 proteins (24 control probes excluded from released data)
