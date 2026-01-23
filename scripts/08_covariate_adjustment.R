@@ -181,7 +181,7 @@ prepare_covariates <- function(covariate_file, sample_ids, metadata) {
   complete_samples <- complete.cases(covariate_data[, ..check_cols])
 
   log_info("Samples with complete covariates: {sum(complete_samples)} out of {length(complete_samples)}")
-  log_info("Adjusting for: age, sex, BMI, smoking (proteomic PCs excluded to preserve biological signal)")
+  # Note: Actual covariates adjusted for will be logged in main() function after reading from config
 
   return(list(
     covariates = covariate_data,
@@ -192,8 +192,8 @@ prepare_covariates <- function(covariate_file, sample_ids, metadata) {
 
 # Function to adjust for covariates using linear regression
 # NOTE: Proteomic PCs are NOT adjusted for to preserve biological signal
-adjust_covariates_lm <- function(npx_matrix, covariates, adjust_for = c("age", "sex", "bmi", "smoking")) {
-  log_info("Adjusting for covariates using linear regression (age, sex, BMI, smoking - proteomic PCs excluded)")
+adjust_covariates_lm <- function(npx_matrix, covariates, adjust_for = c("age", "sex")) {
+  log_info("Adjusting for covariates using linear regression: {paste(adjust_for, collapse=', ')} (proteomic PCs excluded)")
 
   # Prepare covariate matrix
   if("age" %in% adjust_for) {
@@ -1060,11 +1060,52 @@ main <- function() {
   # Evaluate covariate effects before adjustment (ALL proteins)
   effects_before <- evaluate_covariate_effects(npx_matrix, covariate_result$covariates, use_all_proteins = TRUE)
 
-  # Adjust for covariates (age, sex, BMI, smoking - proteomic PCs excluded)
+  # Get covariates to adjust for from config (default: age and sex only)
+  covariate_config <- tryCatch(config$parameters$covariate_adjustment, error = function(e) NULL)
+  if (!is.null(covariate_config$covariates_to_adjust) && length(covariate_config$covariates_to_adjust) > 0) {
+    # Use list from config
+    covariates_to_adjust <- covariate_config$covariates_to_adjust
+    log_info("Covariates to adjust (from config): {paste(covariates_to_adjust, collapse=', ')}")
+  } else {
+    # Fallback: check legacy boolean flags for backward compatibility
+    covariates_to_adjust <- character()
+    if (tryCatch(isTRUE(covariate_config$adjust_for_age), error = function(e) TRUE)) {
+      covariates_to_adjust <- c(covariates_to_adjust, "age")
+    }
+    if (tryCatch(isTRUE(covariate_config$adjust_for_sex), error = function(e) TRUE)) {
+      covariates_to_adjust <- c(covariates_to_adjust, "sex")
+    }
+    if (tryCatch(isTRUE(covariate_config$adjust_for_bmi), error = function(e) FALSE)) {
+      covariates_to_adjust <- c(covariates_to_adjust, "bmi")
+    }
+    if (tryCatch(isTRUE(covariate_config$adjust_for_smoking), error = function(e) FALSE)) {
+      covariates_to_adjust <- c(covariates_to_adjust, "smoking")
+    }
+    # Default to age and sex if nothing specified
+    if (length(covariates_to_adjust) == 0) {
+      covariates_to_adjust <- c("age", "sex")
+      log_info("No covariates specified in config, using defaults: age, sex")
+    } else {
+      log_info("Covariates to adjust (from legacy config flags): {paste(covariates_to_adjust, collapse=', ')}")
+    }
+  }
+
+  # Validate covariates (must be one of: age, sex, bmi, smoking)
+  valid_covariates <- c("age", "sex", "bmi", "smoking")
+  invalid_covariates <- setdiff(covariates_to_adjust, valid_covariates)
+  if (length(invalid_covariates) > 0) {
+    log_warn("Invalid covariates specified: {paste(invalid_covariates, collapse=', ')}. Valid options: {paste(valid_covariates, collapse=', ')}")
+    covariates_to_adjust <- intersect(covariates_to_adjust, valid_covariates)
+  }
+  if (length(covariates_to_adjust) == 0) {
+    stop("No valid covariates specified for adjustment. Must include at least one of: age, sex, bmi, smoking")
+  }
+
+  # Adjust for covariates (proteomic PCs excluded)
   adjusted_matrix <- adjust_covariates_lm(
     npx_matrix,
     covariate_result$covariates,
-    adjust_for = c("age", "sex", "bmi", "smoking")
+    adjust_for = covariates_to_adjust
   )
 
   # Create age-filtered adjusted matrix (exclude samples with age <= 20)

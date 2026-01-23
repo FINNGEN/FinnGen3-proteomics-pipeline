@@ -132,12 +132,19 @@ parameters:
 
   # Covariate adjustment (Step 08)
   covariate_adjustment:
+    # List of covariates to adjust for (default: age and sex only)
+    # Available options: age, sex, bmi, smoking
+    # Note: Proteomic PCs (pPC1-10) are NOT adjusted for to preserve biological signal
+    covariates_to_adjust:
+      - age
+      - sex
+    # Legacy boolean flags (deprecated, use covariates_to_adjust list instead)
     adjust_for_age: true
     adjust_for_sex: true
-    adjust_for_bmi: true
-    adjust_for_smoking: true
-    adjust_for_pcs: true
-    n_pcs_to_adjust: 10  # Number of proteomic PCs to adjust for
+    adjust_for_bmi: false
+    adjust_for_smoking: false
+    adjust_for_pcs: false  # Proteomic PCs are never adjusted (preserve biological signal)
+    n_pcs_to_adjust: 10  # Not used (proteomic PCs excluded from adjustment)
 
   # Kinship filtering (Step 10)
   kinship_filtering:

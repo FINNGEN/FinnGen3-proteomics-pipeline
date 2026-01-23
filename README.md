@@ -73,7 +73,7 @@ flowchart TD
     BridgeNorm -->|Enabled| BridgeNormRun[Enhanced Bridge<br/>Quantile normalisation]
     BridgeNorm -->|Disabled| Covariate
 
-    BridgeNormRun --> Covariate[08_covariate_adjustment.R<br/>Adjust for age/sex/BMI/smoking<br/>Proteomic PCs excluded]
+    BridgeNormRun --> Covariate[08_covariate_adjustment.R<br/>Adjust for covariates<br/>Default: age/sex (configurable)<br/>Proteomic PCs excluded]
 
     Covariate --> Phenotype[09_prepare_phenotypes.R<br/>Combine QC results<br/>Create phenotype matrix]
 
@@ -443,12 +443,20 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
   - `07_npx_matrix_bridge_quantile.rds`: Quantile normalised
 
 #### 08_covariate_adjustment.R
-- **Purpose**: Adjust for biological covariates (age, sex, BMI, smoking)
-- **Covariates**: Age, sex, BMI, smoking status
-- **Note**: Proteomic PCs are **NOT** adjusted for to preserve biological signal. They are evaluated and visualised but not removed from the data.
+- **Purpose**: Adjust for biological covariates using linear regression
+- **Default Covariates**: Age and sex only (configurable via `config.yaml`)
+- **Available Covariates**: Age, sex, BMI, smoking status
+- **Configuration**:
+  - Specify covariates via `parameters.covariate_adjustment.covariates_to_adjust` list in `config.yaml`
+  - Example: `covariates_to_adjust: [age, sex, bmi, smoking]` to include all covariates
+  - Default: `[age, sex]` if not specified
+- **Note**: Proteomic PCs (pPC1-10) are **NOT** adjusted for to preserve biological signal. They are evaluated and visualised but not removed from the data.
+- **Method**: Linear regression with residual-based adjustment (mean-preserved)
 - **Output**:
   - `08_npx_matrix_adjusted.rds`: Covariate-adjusted matrix
-  - `08_covariate_effects_summary.tsv`: Effect sizes
+  - `08_covariate_effects_summary.tsv`: Effect sizes before/after adjustment
+  - `08_covariate_age_comparison.pdf`: Before/after age effect comparison
+  - `08_covariate_sex_comparison.pdf`: Before/after sex effect comparison
 
 ### Phase 4: Phenotype Preparation
 
@@ -630,6 +638,8 @@ The pipeline is configured via a YAML file. See `config/config.yaml.template` fo
 - `covariates`: Covariate and kinship file paths
 - `output`: Output directory structure
 - `parameters`: Analysis parameters (thresholds, methods)
+  - `covariate_adjustment`: Covariates to adjust for (default: age and sex)
+    - `covariates_to_adjust`: List of covariates (e.g., `[age, sex, bmi, smoking]`)
 
 **Environment Variables:**
 - `PIPELINE_CONFIG`: Path to config YAML file (required)
@@ -832,6 +842,24 @@ parameters:
 ```
 
 When enabled, steps 09-11 will create additional aggregate outputs combining data from all batches.
+
+#### Step 4: Configure Covariate Adjustment (Optional)
+
+By default, the pipeline adjusts for age and sex only. To customize which covariates to adjust for:
+
+```yaml
+parameters:
+  covariate_adjustment:
+    # List of covariates to adjust for (default: age and sex only)
+    # Available options: age, sex, bmi, smoking
+    covariates_to_adjust:
+      - age
+      - sex
+      # - bmi      # Uncomment to include BMI
+      # - smoking  # Uncomment to include smoking
+```
+
+**Note**: Proteomic PCs (pPC1-10) are never adjusted for to preserve biological signal. They are evaluated and visualised but not removed from the data.
 
 ### Running Multi-Batch Pipeline
 
