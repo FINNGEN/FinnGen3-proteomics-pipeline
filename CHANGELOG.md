@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/compare/v1.0.0...v1.0.1) (2026-01-23)
+
+
+### Bug Fixes
+
+* **pipeline:** fix step 05c skip logic to prevent execution when disabled ([95c688f](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/commit/95c688f2cb10d35270ea2fd2479cbdb4c2d95ae2))
+
 # Changelog
 
 All notable changes to this project will be documented in this file.

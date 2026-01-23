@@ -1,11 +1,11 @@
 # Dockerfile for FinnGen 3 Olink Analysis Pipeline
 # Refactored version - Docker-ready for public release
-# Version: 1.0.0
+# Version: 1.0.1
 
 FROM rocker/r-ver:4.3.2
 
 # Add version label for tracking
-LABEL version="1.0.0" \
+LABEL version="1.0.1" \
       maintainer="Reza Jabal <rjabal@broadinstitute.org>" \
       description="FinnGen 3 Olink Proteomics Analysis Pipeline"
 
