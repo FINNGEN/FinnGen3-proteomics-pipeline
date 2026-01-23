@@ -27,6 +27,8 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           token: ${{ secrets.GITHUB_TOKEN }}
+          # Ensure we get all history including grafted commits
+          ref: ${{ github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -48,8 +50,11 @@ jobs:
       - name: Fetch all tags
         run: |
           git fetch --tags --force
+          git fetch --unshallow 2>/dev/null || true
           echo "Available tags:"
           git tag -l | sort -V || echo "No tags found"
+          echo "Latest tag:"
+          git describe --tags --abbrev=0 2>/dev/null || echo "No tags found"
 
       - name: Run semantic-release
         id: semantic-release

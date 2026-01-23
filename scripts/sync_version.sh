@@ -3,6 +3,7 @@
 #
 # This script updates the version number in:
 # - VERSION file
+# - package.json (version field)
 # - Dockerfile (LABEL version and comment)
 # - README.md (all version references)
 # - Documentation files (docs/*.md and docs/*.tex) - pipeline version references only
@@ -34,7 +35,15 @@ echo "Syncing version to ${VERSION_CLEAN}..."
 echo "${VERSION_CLEAN}" > VERSION
 echo "✓ Updated VERSION file"
 
-# 2. Update Dockerfile
+# 2. Update package.json
+if [ -f "package.json" ]; then
+    # Use sed to update the version field in package.json
+    sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION_CLEAN}\"/" package.json
+    
+    echo "✓ Updated package.json"
+fi
+
+# 3. Update Dockerfile
 if [ -f "Dockerfile" ]; then
     # Update version comment
     sed -i "s/^# Version: .*/# Version: ${VERSION_CLEAN}/" Dockerfile
@@ -45,7 +54,7 @@ if [ -f "Dockerfile" ]; then
     echo "✓ Updated Dockerfile"
 fi
 
-# 3. Update README.md
+# 4. Update README.md
 if [ -f "README.md" ]; then
     # Update version in **Version**: line (multiple patterns)
     sed -i "s/\*\*Version\*\*: [0-9.]*/**Version**: ${VERSION_CLEAN}/g" README.md
@@ -57,7 +66,7 @@ if [ -f "README.md" ]; then
     echo "✓ Updated README.md"
 fi
 
-# 4. Update documentation files (docs/) - Pipeline version only
+# 5. Update documentation files (docs/) - Pipeline version only
 if [ -d "docs" ]; then
     # Update pipeline version in markdown files
     find docs -name "*.md" -type f | while read -r file; do
