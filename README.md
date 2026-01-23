@@ -73,7 +73,7 @@ flowchart TD
     BridgeNorm -->|Enabled| BridgeNormRun[Enhanced Bridge<br/>Quantile normalisation]
     BridgeNorm -->|Disabled| Covariate
 
-    BridgeNormRun --> Covariate[08_covariate_adjustment.R<br/>Adjust for covariates<br/>Default: age/sex (configurable)<br/>Proteomic PCs excluded]
+    BridgeNormRun --> Covariate["08_covariate_adjustment.R<br/>Adjust for covariates<br/>Default: age/sex, configurable<br/>Proteomic PCs excluded"]
 
     Covariate --> Phenotype[09_prepare_phenotypes.R<br/>Combine QC results<br/>Create phenotype matrix]
 
