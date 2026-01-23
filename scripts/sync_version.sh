@@ -37,8 +37,14 @@ echo "✓ Updated VERSION file"
 
 # 2. Update package.json
 if [ -f "package.json" ]; then
-    # Use sed to update the version field in package.json
-    sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION_CLEAN}\"/" package.json
+    # Check if jq is available for safer JSON manipulation
+    if command -v jq &> /dev/null; then
+        # Use jq for robust JSON manipulation
+        jq --arg ver "${VERSION_CLEAN}" '.version = $ver' package.json > package.json.tmp && mv package.json.tmp package.json
+    else
+        # Fallback to sed if jq is not available
+        sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION_CLEAN}\"/" package.json
+    fi
     
     echo "✓ Updated package.json"
 fi

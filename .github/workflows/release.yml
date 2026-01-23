@@ -50,7 +50,11 @@ jobs:
       - name: Fetch all tags
         run: |
           git fetch --tags --force
-          git fetch --unshallow 2>/dev/null || true
+          # Only unshallow if repository is shallow
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            echo "Repository is shallow, fetching full history..."
+            git fetch --unshallow
+          fi
           echo "Available tags:"
           git tag -l | sort -V || echo "No tags found"
           echo "Latest tag:"
