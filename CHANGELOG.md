@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/compare/v1.0.1...v1.1.0) (2026-01-23)
+
+
+### Features
+
+* **pipeline:** make covariate adjustment config-driven with age and sex as defaults ([dd8995e](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/commit/dd8995e7d031367f457817e9a95f1fdbc24635bd))
+
 ## [1.0.1](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/compare/v1.0.0...v1.0.1) (2026-01-23)
 
 
