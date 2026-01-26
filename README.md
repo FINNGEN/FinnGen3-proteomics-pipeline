@@ -20,7 +20,8 @@ A comprehensive, Docker-ready R pipeline for analysing Olink Explore HT (5K) pro
 - **QC Machine Components**: Technical Outlier Check [PCA → Technical → Z-score] → Sample Provenance Check[Sex Outliers → pQTL-based Outliers]
 - **Fully Configurable**: All paths and parameters configured via YAML config file
 - **Docker-Ready**: Complete Docker setup with automated builds
-- **Multi-Batch Support**: Process and harmonise multiple batches with bridge sample normalisation
+- **Multi-Batch Support**: Process and harmonise multiple batches with flexible normalization (bridge → ComBat → median fallback)
+- **Metadata Flexibility**: Handles missing metadata columns gracefully (DISEASE_GROUP, timestamp columns optional)
 - **Comprehensive QC Reporting**: Integrated outlier tracking with detailed metrics and annotations
 
 **Pipeline Summary:**
@@ -246,6 +247,10 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
 
 #### 01_pca_outliers.R
 - **Purpose**: PCA-based outlier detection
+- **Metadata Flexibility**: The pipeline handles missing metadata columns gracefully:
+  - **DISEASE_GROUP**: Optional column created from disease indicator columns (if present)
+  - If no disease indicator columns exist, DISEASE_GROUP is set to "None" for all samples
+  - Pipeline continues successfully even when disease group information is unavailable
 - **Methods**:
   - PC1 & PC2 thresholds: mean ± 5 SD after Olink scaling
   - PC3 & PC4 thresholds: mean ± 5 SD
@@ -271,6 +276,10 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
 - **Purpose**: Identify technical outliers using multiple orthogonal quality metrics
 - **Input Matrix**: `npx_matrix_analysis_ready` (base matrix from Step 00) - **parallel flagging**
 - **Design**: Operates on the same base matrix as Steps 01 and 03 to enable parallel flagging
+- **Metadata Flexibility**: The pipeline handles missing metadata columns gracefully:
+  - **APPROX_TIMESTAMP_COLLECTION** and **APPROX_TIMESTAMP_FREEZING**: Optional columns for processing time outlier detection
+  - If these columns are missing, processing time outlier detection is skipped gracefully
+  - Pipeline continues successfully even when timestamp information is unavailable
 - **Detection Methods**:
   1. **Plate-level outliers** (5×MAD ≈ 4×SD): Flags all samples from outlier plates
   2. **Batch effects** (5×MAD ≈ 4×SD): Identifies temporal batch effects by collection month
@@ -296,6 +305,10 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
 - **Purpose**: Protein-centric outlier detection using per-protein Z-scores
 - **Input Matrix**: `npx_matrix_analysis_ready` (base matrix from Step 00) - **parallel flagging**
 - **Design**: Operates on the same base matrix as Steps 01 and 02 to enable parallel flagging
+- **Metadata Flexibility**: The pipeline handles missing metadata columns gracefully:
+  - **DISEASE_GROUP**: Optional column - only included if present in PCA outliers output
+  - Pipeline continues successfully even when disease group information is unavailable
+  - Disease group analysis is skipped if DISEASE_GROUP column is missing
 - **Method**:
   1. Calculate per-protein Z-scores: `Z = (NPX - protein_mean) / protein_SD`
   2. Flag extreme values: `|Z| > 4`
@@ -416,14 +429,20 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
   - **Expected Performance**: Typically achieves ~9.7% SD reduction
 
   **Multi-Batch Mode**:
-  - **Primary Method**: **Bridge Normalisation** (required for cross-batch harmonisation)
+  - **Normalization Strategy**: For each batch, the pipeline attempts **cross-batch normalization first** (preferred for harmonization), then falls back to **intra-batch normalization** if cross-batch methods fail
+  - **Primary Method**: **Bridge Normalisation** (cross-batch harmonisation, preferred)
     - Uses bridge samples from both batches to calculate combined reference medians
     - Harmonises protein expression levels across batches
-    - Required for combining data from multiple batches
-  - **Comparison Methods** (generated for evaluation):
+    - Requires ≥10 bridge samples for successful normalization
+    - Uses bridge samples shared between batches (same FINNGENIDs, different SampleIDs)
+  - **Fallback Chain**: If bridge normalisation fails (insufficient bridge samples <10), the pipeline automatically falls back to:
+    1. **ComBat**: Cross-batch batch correction (requires multiple batches; may fail if only one batch available)
+    2. **Median**: Standard intra-batch normalisation (final fallback, always succeeds)
+  - **Comparison Methods** (generated for evaluation when available):
     - **ComBat**: Batch correction using empirical Bayes framework
     - **Median**: Standard intra-batch normalisation (for comparison)
   - **Expected Performance**: Bridge normalisation achieves cross-batch harmonisation while preserving biological variation
+  - **Note**: Bridge and ComBat normalization are **ONLY applicable in multi-batch mode** - the pipeline enforces this with explicit guards
 
 - **Evaluation**: SD, MAD, and IQR reduction (CV not meaningful for log-transformed NPX data)
 - **Output**:

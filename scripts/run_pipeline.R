@@ -145,7 +145,12 @@ pipeline_steps <- list(
 )
 
 # Steps that require cross-batch operations (run after all batches complete steps 00-05d)
-cross_batch_steps <- c("06_normalize_data", "07_bridge_normalization")
+# NOTE: 06_normalize_data is NOT a true cross-batch step - it runs per-batch but can use cross-batch data
+cross_batch_steps <- c("07_bridge_normalization")
+
+# Steps that require normalized data (run after normalization steps 06-07)
+# NOTE: 06_normalize_data runs per-batch in Phase 3.5, before step 08
+post_normalization_steps <- c("06_normalize_data", "08_covariate_adjustment")
 
 # Steps that handle aggregation (run after all batches complete steps 00-08)
 aggregation_steps <- c("09_prepare_phenotypes", "10_kinship_filtering", "11_rank_normalize")
@@ -577,9 +582,10 @@ main <- function() {
     log_info("Other batches: {if(length(other_batches) > 0) paste(other_batches, collapse=', ') else 'none'}")
     cat("Other batches:", other_batches_str, "\n")
 
-    # Phase 1: Process reference batch first through all independent steps (00-05, 08, 09-11)
+    # Phase 1: Process reference batch first through all independent steps (00-05d)
     # This ensures reference batch is fully QCed before being used by other batches
-    independent_steps <- setdiff(steps_to_run, c(cross_batch_steps, aggregation_steps))
+    # Note: Steps 06-07 are cross-batch, step 08 requires normalized data, steps 09-11 are aggregation
+    independent_steps <- setdiff(steps_to_run, c(cross_batch_steps, post_normalization_steps, aggregation_steps))
 
     if (length(independent_steps) > 0) {
       phase1_msg <- paste0("\nPhase 1: Processing reference batch (", reference_batch_id, ") through all independent steps\n")
@@ -608,7 +614,7 @@ main <- function() {
       }
     }
 
-    # Phase 2: Process other batches through independent steps (00-05, 08, 09-11)
+    # Phase 2: Process other batches through independent steps (00-05d)
     # These batches can now use QCed data from reference batch
     if (length(other_batches) > 0 && length(independent_steps) > 0) {
       phase2_msg <- paste0("\nPhase 2: Processing other batches through independent steps (using QCed reference batch data)\n")
@@ -651,6 +657,40 @@ main <- function() {
         } else {
           failed_steps <- c(failed_steps, step)
           log_error("Cross-batch step {step} failed")
+        }
+      }
+    }
+
+    # Phase 3.5: Normalization and post-normalization steps (06, 08) - run per-batch
+    # Step 06 runs per-batch (can use cross-batch data for normalization)
+    # Step 08 requires normalized data from step 06
+    post_norm_to_run <- intersect(steps_to_run, post_normalization_steps)
+    
+    if (length(post_norm_to_run) > 0) {
+      phase35_msg <- paste0("\nPhase 3.5: Running normalization and post-normalization steps (per-batch)\n")
+      cat(phase35_msg)
+      log_info("Phase 3.5: Running normalization and post-normalization steps (per-batch)")
+      log_info("  Step 06 runs per-batch (can use cross-batch data for normalization)")
+      log_info("  Step 08 requires normalized data from step 06")
+      
+      for (batch_id in batches) {
+        for (step in post_norm_to_run) {
+          success <- run_step_for_batch(step, batch_id, config, isTRUE(args$dry_run))
+          if (success) {
+            if (!batch_id %in% names(batch_results)) {
+              batch_results[[batch_id]] <- list(success = 0, failed = character())
+            }
+            batch_results[[batch_id]]$success <- batch_results[[batch_id]]$success + 1
+            success_count <- success_count + 1
+          } else {
+            failed_step <- paste0(step, " (", batch_id, ")")
+            if (!batch_id %in% names(batch_results)) {
+              batch_results[[batch_id]] <- list(success = 0, failed = character())
+            }
+            batch_results[[batch_id]]$failed <- c(batch_results[[batch_id]]$failed, step)
+            failed_steps <- c(failed_steps, failed_step)
+            log_error("Batch {batch_id} failed at step {step}, but continuing with other batches")
+          }
         }
       }
     }

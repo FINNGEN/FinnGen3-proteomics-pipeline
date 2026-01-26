@@ -203,24 +203,53 @@ apply_maf_filter <- function(variants, maf_threshold, context = "selection") {
     return(variants_filtered)
 }
 
-# Helper: Load consensus/trained pQTLs
+# Helper: Load consensus/trained pQTLs or provided pQTL list
 load_trained_pqtls <- function(pqtl_config, config, batch_id) {
     use_consensus_pqtls <- tryCatch(isTRUE(pqtl_config$use_consensus_pqtls), error = function(e) FALSE)
     training_config <- config$pqtl_training
     trained_pqtls <- NULL
     trained_thresholds <- NULL
 
+    # First, check for provided pQTL list file (when training is disabled)
+    provided_pqtl_file <- tryCatch(pqtl_config$provided_pqtl_list_file, error = function(e) NULL)
+    if (!is.null(provided_pqtl_file) && file.exists(provided_pqtl_file)) {
+        log_info("Loading provided pQTL list from: {provided_pqtl_file}")
+        provided_pqtls_dt <- tryCatch(fread(provided_pqtl_file), error = function(e) NULL)
+        if (!is.null(provided_pqtls_dt) && nrow(provided_pqtls_dt) > 0) {
+            # Handle different column names (rsid, variant, variant_id, etc.)
+            if ("rsid" %in% names(provided_pqtls_dt)) {
+                trained_pqtls <- data.table(rsid = provided_pqtls_dt$rsid)
+            } else if ("variant" %in% names(provided_pqtls_dt)) {
+                trained_pqtls <- data.table(rsid = provided_pqtls_dt$variant)
+            } else if ("variant_id" %in% names(provided_pqtls_dt)) {
+                trained_pqtls <- data.table(rsid = provided_pqtls_dt$variant_id)
+            } else if (ncol(provided_pqtls_dt) == 1) {
+                # Single column - assume it's rsid
+                trained_pqtls <- data.table(rsid = unlist(provided_pqtls_dt[, 1]))
+            } else {
+                log_warn("Provided pQTL file has unexpected format. Expected 'rsid', 'variant', or 'variant_id' column, or single column. Falling back to other sources.")
+            }
+            if (!is.null(trained_pqtls) && nrow(trained_pqtls) > 0) {
+                log_info("Loaded {nrow(trained_pqtls)} pQTLs from provided list")
+                return(list(pqtls = trained_pqtls, thresholds = trained_thresholds))
+            }
+        } else {
+            log_warn("Provided pQTL file exists but could not be read or is empty: {provided_pqtl_file}")
+        }
+    }
+
+    # Second, check for consensus pQTLs from step 05a training
     if (use_consensus_pqtls) {
         training_output_dir <- file.path(config$output$base_dir, training_config$output_dir %||% "pqtl-training", batch_id)
-        consensus_pqtls_path <- file.path(training_output_dir, "05a_consensus_pqtls.tsv")
-        consensus_config_path <- file.path(training_output_dir, "05a_consensus_config.yaml")
+        consensus_pqtls_path <- file.path(training_output_dir, "05_05a_consensus_pqtls.tsv")
+        consensus_config_path <- file.path(training_output_dir, "05_05a_consensus_config.yaml")
 
         # Fallback to legacy names
         if (!file.exists(consensus_pqtls_path)) {
-            consensus_pqtls_path <- file.path(training_output_dir, training_config$outputs$selected_pqtls %||% "05a_selected_pqtls.tsv")
+            consensus_pqtls_path <- file.path(training_output_dir, training_config$outputs$selected_pqtls %||% "05_05a_selected_pqtls.tsv")
         }
         if (!file.exists(consensus_config_path)) {
-            consensus_config_path <- file.path(training_output_dir, training_config$outputs$trained_thresholds %||% "05a_trained_thresholds.yaml")
+            consensus_config_path <- file.path(training_output_dir, training_config$outputs$trained_thresholds %||% "05_05a_trained_thresholds.yaml")
         }
 
         if (file.exists(consensus_pqtls_path) && file.exists(consensus_config_path)) {
@@ -242,8 +271,8 @@ load_trained_pqtls <- function(pqtl_config, config, batch_id) {
     } else if (!is.null(training_config) && isTRUE(training_config$enabled)) {
         # Legacy format
         training_output_dir <- file.path(config$output$base_dir, training_config$output_dir %||% "pqtl-training", batch_id)
-        selected_pqtls_path <- file.path(training_output_dir, training_config$outputs$selected_pqtls %||% "05a_selected_pqtls.tsv")
-        thresholds_path <- file.path(training_output_dir, training_config$outputs$trained_thresholds %||% "05a_trained_thresholds.yaml")
+        selected_pqtls_path <- file.path(training_output_dir, training_config$outputs$selected_pqtls %||% "05_05a_selected_pqtls.tsv")
+        thresholds_path <- file.path(training_output_dir, training_config$outputs$trained_thresholds %||% "05_05a_trained_thresholds.yaml")
 
         if (file.exists(selected_pqtls_path) && file.exists(thresholds_path)) {
             log_info("Loading trained parameters (legacy format)")
@@ -2011,7 +2040,7 @@ main <- function() {
         log_info("Removed {length(all_outlier_ids)} samples ({round(100*length(all_outlier_ids)/nrow(base_matrix), 2)}%)")
 
         # Save final cleaned matrix
-        final_matrix_path <- get_output_path("05d", "npx_matrix_all_qc_passed", batch_id, "phenotypes", "rds", config = config)
+        final_matrix_path <- get_output_path("05d", "05d_npx_matrix_all_qc_passed", batch_id, "phenotypes", "rds", config = config)
         ensure_output_dir(final_matrix_path)
         saveRDS(final_cleaned_matrix, final_matrix_path)
         log_info("Saved final cleaned matrix to: {final_matrix_path}")
@@ -2021,7 +2050,7 @@ main <- function() {
         if (file.exists(pcnorm_base_path)) {
             pcnorm_base <- readRDS(pcnorm_base_path)
             pcnorm_cleaned <- pcnorm_base[keep_samples, ]
-            pcnorm_final_path <- get_output_path("05b", "pcnorm_matrix_all_outliers_removed", batch_id, "outliers", "rds", config = config)
+            pcnorm_final_path <- get_output_path("05b", "05b_pcnorm_matrix_all_outliers_removed", batch_id, "outliers", "rds", config = config)
             ensure_output_dir(pcnorm_final_path)
             saveRDS(pcnorm_cleaned, pcnorm_final_path)
             log_info("Saved final cleaned PCNorm matrix to: {pcnorm_final_path}")

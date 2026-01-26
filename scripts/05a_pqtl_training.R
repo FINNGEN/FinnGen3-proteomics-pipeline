@@ -407,7 +407,7 @@ run_pqtl_training <- function(config = NULL, batch_id = NULL, verbose = FALSE) {
             log_info("")
             log_info("--- Global pQTL Prep ---")
 
-            collated_path <- file.path(output_dir, "05a_finemap_collated_global.tsv")
+            collated_path <- file.path(output_dir, "05_05a_finemap_collated_global.tsv")
             top_variants_global <- NULL
 
             if (file.exists(collated_path)) {
@@ -1066,7 +1066,7 @@ run_pqtl_training <- function(config = NULL, batch_id = NULL, verbose = FALSE) {
                         ) +
                         theme_bw()
 
-                    ggsave(file.path(plot_dir, paste0("05a_diagnostic_ROC_cohort_", cohort_idx, ".pdf")), p_roc, width = 6, height = 5)
+                    ggsave(file.path(plot_dir, paste0("05_05a_diagnostic_ROC_cohort_", cohort_idx, ".pdf")), p_roc, width = 6, height = 5)
 
                     # PR Plot
                     p_pr <- ggplot(pr_data, aes(x = Recall, y = Precision, color = Metric)) +
@@ -1078,7 +1078,7 @@ run_pqtl_training <- function(config = NULL, batch_id = NULL, verbose = FALSE) {
                         scale_color_manual(values = c("#E7B800", "#FC4E07")) +
                         theme_bw()
 
-                    ggsave(file.path(plot_dir, paste0("05a_diagnostic_PR_cohort_", cohort_idx, ".pdf")), p_pr, width = 6, height = 5)
+                    ggsave(file.path(plot_dir, paste0("05_05a_diagnostic_PR_cohort_", cohort_idx, ".pdf")), p_pr, width = 6, height = 5)
 
 
                     # B. Faceted Sex Cross-reference Plots
@@ -1157,7 +1157,7 @@ run_pqtl_training <- function(config = NULL, batch_id = NULL, verbose = FALSE) {
                                 labs(title = paste0("MeanAbsZ vs Sex Prob - Cohort ", cohort_idx), y = "MeanAbsZ") +
                                 theme_bw()
 
-                            ggsave(file.path(plot_dir, paste0("05a_diagnostic_MeanAbsZ_cohort_", cohort_idx, ".pdf")), p_z, width = 8, height = 8)
+                            ggsave(file.path(plot_dir, paste0("05_05a_diagnostic_MeanAbsZ_cohort_", cohort_idx, ".pdf")), p_z, width = 8, height = 8)
 
                             # Plot MAR
                             p_mar <- ggplot(plot_data, aes(x = predicted_prob, y = mar)) +
@@ -1173,7 +1173,7 @@ run_pqtl_training <- function(config = NULL, batch_id = NULL, verbose = FALSE) {
                                 labs(title = paste0("MAR vs Sex Prob - Cohort ", cohort_idx), y = "MAR") +
                                 theme_bw()
 
-                            ggsave(file.path(plot_dir, paste0("05a_diagnostic_MAR_cohort_", cohort_idx, ".pdf")), p_mar, width = 8, height = 8)
+                            ggsave(file.path(plot_dir, paste0("05_05a_diagnostic_MAR_cohort_", cohort_idx, ".pdf")), p_mar, width = 8, height = 8)
                         }
                     }
 
@@ -1207,7 +1207,7 @@ run_pqtl_training <- function(config = NULL, batch_id = NULL, verbose = FALSE) {
             log_info("Recommended Thresholds: MeanAbsZ > Mean + {round(mean_k_z, 2)}*SD, MAR > Median + {round(mean_k_mar, 2)}*MAD")
 
             # Write Outputs
-            fwrite(consensus_vars, file.path(output_dir, "05a_consensus_pqtls.tsv"), sep = "\t")
+            fwrite(consensus_vars, file.path(output_dir, "05_05a_consensus_pqtls.tsv"), sep = "\t")
 
             # Write config YAML snippet
             out_yaml <- list(
@@ -1217,7 +1217,7 @@ run_pqtl_training <- function(config = NULL, batch_id = NULL, verbose = FALSE) {
                     mar = list(k_mad = mean_k_mar)
                 )
             )
-            write_yaml(out_yaml, file.path(output_dir, "05a_consensus_config.yaml"))
+            write_yaml(out_yaml, file.path(output_dir, "05_05a_consensus_config.yaml"))
 
             elapsed <- difftime(Sys.time(), start_time, units = "mins")
             log_info("Training completed in {round(elapsed, 2)} minutes.")

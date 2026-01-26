@@ -5,10 +5,13 @@
 #
 # Purpose:
 #   Normalises proteomics data to remove technical variability and ensure sample
-#   comparability. Mode-dependent behaviour: single-batch mode uses median normalisation
-#   (standard intra-batch step), while multi-batch mode uses bridge normalisation
-#   (primary) with ComBat and median for comparison. Evaluates normalisation
-#   effectiveness using SD, MAD, and IQR reduction metrics.
+#   comparability. Mode-dependent behaviour:
+#   - Single-batch mode: Uses median normalisation only (standard intra-batch step).
+#     Bridge and ComBat normalisations are NOT applicable in single-batch mode.
+#   - Multi-batch mode: Uses bridge normalisation (primary) with fallback to ComBat
+#     or median if bridge samples are insufficient. Bridge and ComBat are ONLY
+#     applicable in multi-batch (cross-batch) mode. Evaluates normalisation
+#     effectiveness using SD, MAD, and IQR reduction metrics.
 #
 # Author: Reza Jabal, PhD (rjabal@broadinstitute.org)
 # Date: December 2025
@@ -90,7 +93,12 @@ check_protein_consistency <- function(batch2_proteins, batch1_proteins) {
 }
 
 # Function for bridge sample normalisation
+# NOTE: Bridge normalization is ONLY applicable in multi-batch (cross-batch) mode
 normalize_bridge <- function(npx_matrix, bridge_samples, reference_batch = NULL, bridge_mapping = NULL, multi_batch_mode = FALSE) {
+  if (!multi_batch_mode) {
+    log_error("Bridge normalization is only applicable in multi-batch (cross-batch) mode")
+    stop("Bridge normalization cannot be used in single-batch mode")
+  }
   log_info("Performing bridge sample normalisation")
 
   # Identify bridge samples in matrix
@@ -268,7 +276,14 @@ normalize_median <- function(npx_matrix, by_plate = FALSE, plate_info = NULL) {
 }
 
 # Function for ComBat normalisation
+# NOTE: ComBat normalization is ONLY applicable in multi-batch (cross-batch) mode
+# ComBat is designed to correct for batch effects between multiple batches
+# When used as a fallback, it may normalize within a single batch (removing plate/technical effects)
 normalize_combat <- function(npx_matrix, batch_info, covariates = NULL) {
+  if (is.null(batch_info)) {
+    log_error("Batch info is required for ComBat normalization")
+    stop("Missing batch info for ComBat")
+  }
   log_info("Performing ComBat batch correction")
 
   # Prepare batch vector
@@ -304,8 +319,9 @@ normalize_combat <- function(npx_matrix, batch_info, covariates = NULL) {
     expr_matrix[i, is.na(expr_matrix[i, ])] <- mean(expr_matrix[i, ], na.rm = TRUE)
   }
 
-  # Initialize normalized_matrix to handle error case
+  # Initialize normalized_matrix and method to handle error case
   normalized_matrix <- NULL
+  method_used <- "combat"  # Default method
 
   # Apply ComBat
   tryCatch({
@@ -319,27 +335,33 @@ normalize_combat <- function(npx_matrix, batch_info, covariates = NULL) {
     normalized_matrix <- t(combat_expr)
 
     log_info("ComBat normalisation successful")
+    method_used <- "combat"
 
   }, error = function(e) {
     log_error("ComBat failed: {e$message}")
+    log_warn("ComBat requires multiple batches to correct for batch effects")
+    log_warn("  Current batch_info has only {length(unique(batch_vector))} unique batch(es)")
+    log_warn("  ComBat cannot work with a single batch - this is expected when used as fallback")
     log_info("Falling back to median normalisation")
 
     # Fallback to median normalisation
     result <- normalize_median(npx_matrix)
     # Use <<- to assign to parent scope
     normalized_matrix <<- result$normalized_matrix
+    method_used <<- "median"  # Changed from "combat" since we fell back
   })
 
   # Verify normalized_matrix was created (either by ComBat or fallback)
   if(is.null(normalized_matrix)) {
     log_error("ComBat failed and fallback also failed - using original matrix")
     normalized_matrix <- npx_matrix
+    method_used <- "none"  # Indicates failure
   }
 
   return(list(
     normalized_matrix = normalized_matrix,
     batch_vector = batch_vector,
-    method = "combat"
+    method = method_used
   ))
 }
 
@@ -357,6 +379,10 @@ normalize_data <- function(npx_matrix, method = "bridge",
 
   result <- switch(method,
     "bridge" = {
+      if (!multi_batch_mode) {
+        log_error("Bridge normalization is only applicable in multi-batch (cross-batch) mode")
+        stop("Bridge normalization cannot be used in single-batch mode")
+      }
       if(is.null(bridge_samples)) {
         log_error("Bridge samples required for bridge normalization")
         stop("Missing bridge samples")
@@ -375,6 +401,10 @@ normalize_data <- function(npx_matrix, method = "bridge",
       }
     },
     "combat" = {
+      if (!multi_batch_mode) {
+        log_error("ComBat normalization is only applicable in multi-batch (cross-batch) mode")
+        stop("ComBat normalization cannot be used in single-batch mode")
+      }
       if(is.null(batch_info)) {
         log_error("Batch info required for ComBat normalization")
         stop("Missing batch info")
@@ -537,7 +567,7 @@ main <- function() {
   log_info("Loading data from previous steps")
   # Use final cleaned matrix (all outliers removed) from step 05
   # Fallback to step 00 QC matrix if final cleaned matrix doesn't exist yet
-  final_cleaned_path <- get_output_path("05d", "npx_matrix_all_qc_passed", batch_id, "phenotypes", "rds", config = config)
+  final_cleaned_path <- get_output_path("05d", "05d_npx_matrix_all_qc_passed", batch_id, "phenotypes", "rds", config = config)
   if (file.exists(final_cleaned_path)) {
     log_info("Using final cleaned matrix (all outliers removed) from step 05d")
     npx_matrix <- readRDS(final_cleaned_path)
@@ -607,7 +637,7 @@ main <- function() {
       log_warn("Could not determine other batch ID for multi-batch normalization. Skipping cross-batch normalization.")
       batch1_npx_matrix <- NULL
     } else {
-      batch1_npx_path <- get_output_path("05d", "npx_matrix_all_qc_passed", other_batch_id, "phenotypes", "rds", config = config)
+      batch1_npx_path <- get_output_path("05d", "05d_npx_matrix_all_qc_passed", other_batch_id, "phenotypes", "rds", config = config)
       if (!file.exists(batch1_npx_path)) {
         # Fallback to step 00 QC matrix
         batch1_npx_path <- get_output_path("00", "npx_matrix_qc", other_batch_id, "qc", config = config)
@@ -634,20 +664,141 @@ main <- function() {
   # Prepare plate information
   plate_info <- unique(samples_data[, .(SampleID, PlateID)])
 
-  # Prepare batch information (using PlateID as batch for now)
-  batch_info <- copy(plate_info)
-  setnames(batch_info, "PlateID", "batch")
+  # Prepare batch information for ComBat
+  # In multi-batch mode, we need to distinguish between actual batches (batch_01, batch_02)
+  # For ComBat to work properly across batches, we should use batch_id, not PlateID
+  if (multi_batch_mode) {
+    # Create batch_info with actual batch IDs
+    # For current batch, all samples get the current batch_id
+    # If we have reference batch data, we could combine, but for now use current batch only
+    batch_info <- data.table(
+      SampleID = rownames(npx_matrix),
+      batch = batch_id
+    )
+    log_info("Prepared batch_info for ComBat: {nrow(batch_info)} samples from {batch_id}")
+    
+    # If we have reference batch matrix, we could combine both batches for better ComBat normalization
+    # But for now, ComBat will normalize within the current batch only (as fallback when bridge fails)
+    if (!is.null(batch1_npx_matrix) && other_batch_id != batch_id) {
+      log_info("Note: ComBat is being applied to current batch only ({batch_id})")
+      log_info("  For full cross-batch ComBat, both batches would need to be combined")
+      log_info("  This is acceptable as a fallback when bridge normalization fails")
+    }
+  } else {
+    # Single-batch mode: Use PlateID as batch (original behavior)
+    batch_info <- copy(plate_info)
+    setnames(batch_info, "PlateID", "batch")
+  }
 
-  # Get bridge sample IDs
+  # Get bridge sample IDs from current batch
   bridge_samples <- bridge_result$bridge_ids
 
-  # Apply normalisation based on mode
-  if (multi_batch_mode) {
-    log_info("=== MULTI-BATCH MODE: Applying bridge normalisation (primary) ===")
-    log_info("Bridge normalisation is required for cross-batch harmonisation")
+  # In multi-batch mode, if current batch has no bridge samples, try to use reference batch's bridge samples
+  # CRITICAL: Bridge samples have the SAME FINNGENIDs but DIFFERENT SampleIDs between batches
+  # Solution: Map bridge samples using FINNGENIDs, not SampleIDs
+  if (multi_batch_mode && length(bridge_samples) == 0 && !is.null(other_batch_id)) {
+    log_warn("Current batch ({batch_id}) has no bridge samples. Attempting to use reference batch's bridge samples via FINNGENID mapping.")
+    
+    # Load reference batch's bridge result
+    ref_bridge_result_path <- get_output_path("00", "bridge_samples_identified", other_batch_id, "normalized", config = config)
+    if (file.exists(ref_bridge_result_path)) {
+      ref_bridge_result <- readRDS(ref_bridge_result_path)
+      ref_bridge_sampleids <- ref_bridge_result$bridge_ids
+      
+      if (length(ref_bridge_sampleids) > 0) {
+        log_info("Found {length(ref_bridge_sampleids)} bridge samples in reference batch ({other_batch_id})")
+        
+        # Load sample mappings from both batches to map via FINNGENIDs
+        ref_sample_mapping_path <- get_output_path("00", "sample_mapping", other_batch_id, "qc", config = config)
+        current_sample_mapping_path <- get_output_path("00", "sample_mapping", batch_id, "qc", config = config)
+        
+        if (file.exists(ref_sample_mapping_path) && file.exists(current_sample_mapping_path)) {
+          ref_sample_mapping <- readRDS(ref_sample_mapping_path)
+          current_sample_mapping <- readRDS(current_sample_mapping_path)
+          
+          # Get FINNGENIDs of bridge samples from reference batch
+          ref_bridge_mapping <- ref_sample_mapping[SampleID %in% ref_bridge_sampleids & !is.na(FINNGENID)]
+          ref_bridge_finngenids <- unique(ref_bridge_mapping$FINNGENID)
+          
+          if (length(ref_bridge_finngenids) > 0) {
+            log_info("Found {length(ref_bridge_finngenids)} unique FINNGENIDs from reference batch bridge samples")
+            
+            # Map FINNGENIDs to current batch's SampleIDs
+            current_bridge_mapping <- current_sample_mapping[FINNGENID %in% ref_bridge_finngenids & !is.na(FINNGENID)]
+            bridge_samples <- unique(current_bridge_mapping$SampleID)
+            
+            # Filter to only include samples present in current batch's matrix
+            bridge_samples <- intersect(bridge_samples, rownames(npx_matrix))
+            
+            if (length(bridge_samples) > 0) {
+              log_info("Mapped {length(bridge_samples)} bridge samples from reference batch to current batch using FINNGENIDs")
+              log_info("  Reference batch bridge FINNGENIDs: {length(ref_bridge_finngenids)}")
+              log_info("  Current batch bridge SampleIDs (mapped): {length(bridge_samples)}")
+              
+              # Create bridge_mapping on-the-fly for cross-batch normalization
+              # CRITICAL: normalize_bridge function expects:
+              # - SAMPLE_ID_batch2 = current batch (being normalized)
+              # - SAMPLE_ID_batch1 = reference batch
+              # This is because the function was written assuming batch_02 is always the current batch
+              # So we need to map: SAMPLE_ID_batch2 (current batch) -> SAMPLE_ID_batch1 (reference batch)
+              if (is.null(bridge_mapping) || nrow(bridge_mapping) == 0) {
+                # Get reference batch bridge SampleIDs for the mapped FINNGENIDs
+                ref_bridge_for_mapping <- ref_sample_mapping[FINNGENID %in% ref_bridge_finngenids & !is.na(FINNGENID)]
+                
+                # Create mapping: SAMPLE_ID_batch2 (current batch) -> SAMPLE_ID_batch1 (reference batch)
+                # Note: Column names are swapped because function expects batch_02 as current batch
+                bridge_mapping <- merge(
+                  current_bridge_mapping[, .(SAMPLE_ID_batch2 = SampleID, FINNGENID)],  # Current batch = batch2
+                  ref_bridge_for_mapping[, .(SAMPLE_ID_batch1 = SampleID, FINNGENID)],    # Reference batch = batch1
+                  by = "FINNGENID",
+                  all.x = TRUE
+                )
+                bridge_mapping[, FINNGENID := NULL]  # Remove FINNGENID column (not needed in mapping)
+                bridge_mapping <- bridge_mapping[!is.na(SAMPLE_ID_batch1)]  # Only keep samples that exist in both batches
+                
+                if (nrow(bridge_mapping) > 0) {
+                  log_info("Created bridge mapping: {nrow(bridge_mapping)} bridge samples mapped between batches")
+                  log_info("  Mapping: SAMPLE_ID_batch2 ({batch_id}) -> SAMPLE_ID_batch1 ({other_batch_id})")
+                } else {
+                  log_warn("Bridge mapping creation resulted in 0 rows. Cross-batch normalization may fall back to single-batch mode.")
+                }
+              }
+            } else {
+              log_warn("No bridge samples found in current batch matrix after FINNGENID mapping. Bridge normalization may fail.")
+              log_warn("  This may indicate that bridge samples were removed during QC steps or are not present in the data.")
+            }
+          } else {
+            log_warn("Reference batch bridge samples have no FINNGENIDs. Cannot map to current batch.")
+          }
+        } else {
+          log_warn("Sample mapping files not found. Cannot map bridge samples via FINNGENIDs.")
+          log_warn("  Reference mapping: {ref_sample_mapping_path} (exists: {file.exists(ref_sample_mapping_path)})")
+          log_warn("  Current mapping: {current_sample_mapping_path} (exists: {file.exists(current_sample_mapping_path)})")
+        }
+      } else {
+        log_warn("Reference batch ({other_batch_id}) also has no bridge samples")
+      }
+    } else {
+      log_warn("Reference batch bridge result file not found: {ref_bridge_result_path}")
+    }
+  }
 
-    # Primary normalisation: Bridge (for cross-batch harmonisation)
-    normalized_result <- normalize_data(
+  # Apply normalisation based on mode
+  # Initialize variables for both modes
+  normalization_method_used <- NULL
+  normalized_result <- NULL
+  norm_bridge <- NULL
+  norm_combat <- NULL
+  norm_median <- NULL
+  norm_median_plate <- NULL
+
+  if (multi_batch_mode) {
+    log_info("=== MULTI-BATCH MODE: Applying normalization with fallback chain ===")
+    log_info("Fallback order: Bridge (preferred) -> ComBat -> Median")
+
+    # Step 1: Try bridge normalization first (preferred for cross-batch harmonisation)
+    log_info("Attempting bridge normalization (preferred method)...")
+    norm_bridge <- normalize_data(
       npx_matrix,
       method = "bridge",
       bridge_samples = bridge_samples,
@@ -658,19 +809,93 @@ main <- function() {
       multi_batch_mode = multi_batch_mode
     )
 
-    # Check if bridge normalisation succeeded
-    if (is.null(normalized_result)) {
-      log_error("Bridge normalization failed in multi-batch mode")
-      log_error("This is required for cross-batch harmonization - cannot proceed")
-      stop("Bridge normalization failed - required for multi-batch mode")
+    if (!is.null(norm_bridge) && !is.null(norm_bridge$normalized_matrix)) {
+      normalized_result <- norm_bridge
+      normalization_method_used <- "bridge"
+      log_info("✓ Bridge normalization succeeded - using as primary method")
+      log_info("  Bridge samples used: {length(norm_bridge$bridge_samples_used %||% bridge_samples)}")
+    } else {
+      log_warn("Bridge normalization failed or insufficient bridge samples ({length(bridge_samples)} available)")
+      log_warn("  Minimum required: 10 bridge samples")
+      log_warn("  Falling back to ComBat normalization...")
+
+      # Step 2: Try ComBat normalization (fallback 1)
+      # NOTE: ComBat normalization is ONLY applicable in multi-batch (cross-batch) mode
+      log_info("Attempting ComBat normalization (fallback method 1 for cross-batch correction)...")
+      norm_combat <- tryCatch({
+        normalize_data(npx_matrix, method = "combat", batch_info = batch_info, multi_batch_mode = TRUE)
+      }, error = function(e) {
+        log_warn("ComBat normalization failed: {e$message}")
+        NULL
+      })
+
+      if (!is.null(norm_combat) && !is.null(norm_combat$normalized_matrix)) {
+        # Check if ComBat actually succeeded or fell back to median
+        if (norm_combat$method == "combat") {
+          normalized_result <- norm_combat
+          normalization_method_used <- "combat"
+          log_info("✓ ComBat normalization succeeded - using as primary method")
+        } else {
+          # ComBat fell back to median, so use median as primary
+          log_warn("ComBat failed and fell back to median - using median as primary method")
+          normalized_result <- norm_combat
+          normalization_method_used <- "median"
+          log_info("✓ Median normalization (from ComBat fallback) - using as primary method")
+        }
+      } else {
+        log_warn("ComBat normalization failed - falling back to median normalization...")
+
+        # Step 3: Try median normalization (fallback 2)
+        log_info("Attempting median normalization (fallback method 2)...")
+        norm_median <- normalize_data(npx_matrix, method = "median")
+
+        if (!is.null(norm_median) && !is.null(norm_median$normalized_matrix)) {
+          normalized_result <- norm_median
+          normalization_method_used <- "median"
+          log_info("✓ Median normalization succeeded - using as primary method")
+        } else {
+          log_error("All normalization methods failed (bridge, ComBat, median)")
+          stop("Normalization failed - cannot proceed")
+        }
+      }
     }
 
-    # Generate alternative normalisations for comparison (multi-batch mode)
+    # Generate alternative normalisations for comparison (only if not already computed)
     log_info("Generating alternative normalisations for comparison (multi-batch mode)")
 
-    norm_median <- normalize_data(npx_matrix, method = "median")
-    norm_combat <- normalize_data(npx_matrix, method = "combat", batch_info = batch_info)
-    norm_median_plate <- NULL  # Not typically used in multi-batch mode
+    # Only compute methods that weren't used as primary
+    # NOTE: Bridge and ComBat are ONLY applicable in multi-batch mode
+    if (normalization_method_used != "bridge" && is.null(norm_bridge)) {
+      norm_bridge <- tryCatch({
+        normalize_data(npx_matrix, method = "bridge", bridge_samples = bridge_samples,
+                      plate_info = plate_info, batch_info = batch_info,
+                      reference_batch = batch1_npx_matrix, bridge_mapping = bridge_mapping,
+                      multi_batch_mode = TRUE)  # Explicitly set to TRUE (we're in multi-batch mode)
+      }, error = function(e) {
+        log_warn("Bridge normalization (for comparison) failed: {e$message}")
+        NULL
+      })
+    }
+
+    if (normalization_method_used != "combat" && is.null(norm_combat)) {
+      norm_combat <- tryCatch({
+        normalize_data(npx_matrix, method = "combat", batch_info = batch_info, multi_batch_mode = TRUE)
+      }, error = function(e) {
+        log_warn("ComBat normalization (for comparison) failed: {e$message}")
+        NULL
+      })
+    }
+
+    if (normalization_method_used != "median" && is.null(norm_median)) {
+      norm_median <- normalize_data(npx_matrix, method = "median")
+    }
+
+    # Log summary of normalization methods
+    log_info("Normalization method summary:")
+    log_info("  Primary method used: {normalization_method_used}")
+    log_info("  Bridge available: {!is.null(norm_bridge) && !is.null(norm_bridge$normalized_matrix)}")
+    log_info("  ComBat available: {!is.null(norm_combat) && !is.null(norm_combat$normalized_matrix)}")
+    log_info("  Median available: {!is.null(norm_median) && !is.null(norm_median$normalized_matrix)}")
 
   } else {
     log_info("=== SINGLE-BATCH MODE: Applying median normalisation (standard intra-batch step) ===")
@@ -685,9 +910,15 @@ main <- function() {
       stop("Normalization failed - cannot proceed")
     }
 
+    # Set method used for single-batch mode
+    normalization_method_used <- "median"
+    
+    # Set norm_median for consistency (it's the primary result)
+    norm_median <- normalized_result
+
     # In single-batch mode, only median normalisation is applied
     # Bridge and ComBat don't make sense for single batch
-    norm_median <- NULL
+    norm_bridge <- NULL
     norm_combat <- NULL
     norm_median_plate <- NULL
 
@@ -696,26 +927,40 @@ main <- function() {
 
   # Evaluate normalisations based on mode
   if (multi_batch_mode) {
-    # Multi-batch mode: Evaluate bridge (primary), median, and ComBat
+    # Multi-batch mode: Evaluate primary method and alternatives
     log_info("Evaluating normalisations (multi-batch mode)")
+    log_info("Primary method: {normalization_method_used}")
 
-    eval_bridge <- evaluate_normalization(npx_matrix, normalized_result$normalized_matrix, metadata)
+    # Evaluate primary normalization method
+    eval_primary <- evaluate_normalization(npx_matrix, normalized_result$normalized_matrix, metadata)
 
-    # Validate alternative normalisations before evaluation
-    if (is.null(norm_median) || is.null(norm_median$normalized_matrix)) {
-      log_warn("Median normalization failed - skipping evaluation")
-      norm_median <- NULL
-      eval_median <- NULL
-    } else {
-      eval_median <- evaluate_normalization(npx_matrix, norm_median$normalized_matrix, metadata)
+    # Evaluate alternative normalisations (only if they exist and weren't used as primary)
+    eval_bridge <- NULL
+    eval_combat <- NULL
+    eval_median <- NULL
+
+    if (!is.null(norm_bridge) && !is.null(norm_bridge$normalized_matrix)) {
+      if (normalization_method_used == "bridge") {
+        eval_bridge <- eval_primary
+      } else {
+        eval_bridge <- evaluate_normalization(npx_matrix, norm_bridge$normalized_matrix, metadata)
+      }
     }
 
-    if (is.null(norm_combat) || is.null(norm_combat$normalized_matrix)) {
-      log_warn("ComBat normalization failed - skipping evaluation")
-      norm_combat <- NULL
-      eval_combat <- NULL
-    } else {
-      eval_combat <- evaluate_normalization(npx_matrix, norm_combat$normalized_matrix, metadata)
+    if (!is.null(norm_combat) && !is.null(norm_combat$normalized_matrix)) {
+      if (normalization_method_used == "combat") {
+        eval_combat <- eval_primary
+      } else {
+        eval_combat <- evaluate_normalization(npx_matrix, norm_combat$normalized_matrix, metadata)
+      }
+    }
+
+    if (!is.null(norm_median) && !is.null(norm_median$normalized_matrix)) {
+      if (normalization_method_used == "median") {
+        eval_median <- eval_primary
+      } else {
+        eval_median <- evaluate_normalization(npx_matrix, norm_median$normalized_matrix, metadata)
+      }
     }
 
     eval_median_plate <- NULL  # Not used in multi-batch mode
@@ -732,20 +977,37 @@ main <- function() {
 
   # Combine evaluations based on mode
   if (multi_batch_mode) {
-    # Multi-batch mode: Include bridge (primary), median, and ComBat
-    evaluation_list <- list(
-      bridge = cbind(method = "bridge", eval_bridge)
-    )
+    # Multi-batch mode: Include all available methods (primary + alternatives)
+    evaluation_list <- list()
 
-    if (!is.null(eval_median)) {
+    # Add primary method evaluation
+    if (normalization_method_used == "bridge" && !is.null(eval_bridge)) {
+      evaluation_list$bridge <- cbind(method = "bridge", eval_bridge)
+    } else if (normalization_method_used == "combat" && !is.null(eval_combat)) {
+      evaluation_list$combat <- cbind(method = "combat", eval_combat)
+    } else if (normalization_method_used == "median" && !is.null(eval_median)) {
       evaluation_list$median <- cbind(method = "median", eval_median)
     }
 
-    if (!is.null(eval_combat)) {
+    # Add alternative methods (if available and not primary)
+    if (!is.null(eval_bridge) && normalization_method_used != "bridge") {
+      evaluation_list$bridge <- cbind(method = "bridge", eval_bridge)
+    }
+
+    if (!is.null(eval_combat) && normalization_method_used != "combat") {
       evaluation_list$combat <- cbind(method = "combat", eval_combat)
     }
 
-    all_evaluations <- do.call(rbind, evaluation_list)
+    if (!is.null(eval_median) && normalization_method_used != "median") {
+      evaluation_list$median <- cbind(method = "median", eval_median)
+    }
+
+    if (length(evaluation_list) > 0) {
+      all_evaluations <- do.call(rbind, evaluation_list)
+    } else {
+      log_warn("No normalization evaluations available - creating empty evaluation table")
+      all_evaluations <- data.table(method = character(), stringsAsFactors = FALSE)
+    }
 
   } else {
     # Single-batch mode: Only median normalisation
@@ -754,19 +1016,37 @@ main <- function() {
 
   # Create plots based on mode
   if (multi_batch_mode) {
-    # Multi-batch mode: Create plots for bridge (primary), median, and ComBat
-    plot_bridge <- create_normalization_plots(npx_matrix, normalized_result$normalized_matrix, "- Bridge (Primary)")
+    # Multi-batch mode: Create plots for primary method and alternatives
+    primary_label <- paste0("- ", toupper(substring(normalization_method_used, 1, 1)), substring(normalization_method_used, 2), " (Primary)")
+    plot_primary <- create_normalization_plots(npx_matrix, normalized_result$normalized_matrix, primary_label)
 
-    plot_median <- if (!is.null(norm_median)) {
-      create_normalization_plots(npx_matrix, norm_median$normalized_matrix, "- Median (Comparison)")
-    } else {
-      NULL
+    # Create plots for alternative methods (if available and not primary)
+    plot_bridge <- NULL
+    plot_combat <- NULL
+    plot_median <- NULL
+
+    if (!is.null(norm_bridge) && !is.null(norm_bridge$normalized_matrix)) {
+      if (normalization_method_used == "bridge") {
+        plot_bridge <- plot_primary
+      } else {
+        plot_bridge <- create_normalization_plots(npx_matrix, norm_bridge$normalized_matrix, "- Bridge (Comparison)")
+      }
     }
 
-    plot_combat <- if (!is.null(norm_combat)) {
-      create_normalization_plots(npx_matrix, norm_combat$normalized_matrix, "- ComBat (Comparison)")
-    } else {
-      NULL
+    if (!is.null(norm_combat) && !is.null(norm_combat$normalized_matrix)) {
+      if (normalization_method_used == "combat") {
+        plot_combat <- plot_primary
+      } else {
+        plot_combat <- create_normalization_plots(npx_matrix, norm_combat$normalized_matrix, "- ComBat (Comparison)")
+      }
+    }
+
+    if (!is.null(norm_median) && !is.null(norm_median$normalized_matrix)) {
+      if (normalization_method_used == "median") {
+        plot_median <- plot_primary
+      } else {
+        plot_median <- create_normalization_plots(npx_matrix, norm_median$normalized_matrix, "- Median (Comparison)")
+      }
     }
 
   } else {
@@ -788,7 +1068,12 @@ main <- function() {
   saveRDS(normalized_result$normalized_matrix, normalized_matrix_path)
   saveRDS(normalized_result, normalization_result_path)
 
-  log_info("Saved primary normalisation ({normalized_result$method}): {normalized_matrix_path}")
+  method_name <- if (!is.null(normalization_method_used)) {
+    normalization_method_used
+  } else {
+    normalized_result$method
+  }
+  log_info("Saved primary normalisation ({method_name}): {normalized_matrix_path}")
 
   # Prepare paths for alternative normalizations (only used in multi-batch mode)
   median_path <- get_output_path(step_num, "npx_matrix_normalized_median", batch_id, "normalized", config = config)
@@ -868,15 +1153,31 @@ main <- function() {
   cat("\n=== NORMALIZATION SUMMARY ===\n")
   if (multi_batch_mode) {
     cat("Mode: MULTI-BATCH\n")
-    cat("Primary method:", normalized_result$method, "\n")
-    if(normalized_result$method == "bridge" || normalized_result$method == "bridge_cross_batch") {
+    cat("Primary method used:", normalization_method_used, "\n")
+    cat("Fallback chain: Bridge -> ComBat -> Median\n")
+    
+    # Show bridge sample info if bridge was used
+    if(normalization_method_used == "bridge" && !is.null(normalized_result$bridge_samples_used)) {
       cat("Bridge samples used:", length(normalized_result$bridge_samples_used), "\n")
       if (!is.null(normalized_result$bridge_samples_batch1)) {
         cat("Bridge samples in reference batch:", length(normalized_result$bridge_samples_batch1), "\n")
       }
     }
-    cat("Alternative methods:", if (!is.null(norm_median)) "median" else "",
-        if (!is.null(norm_combat)) "ComBat" else "", "\n")
+    
+    # Show available alternative methods
+    alt_methods <- character()
+    if (!is.null(norm_bridge) && !is.null(norm_bridge$normalized_matrix) && normalization_method_used != "bridge") {
+      alt_methods <- c(alt_methods, "Bridge")
+    }
+    if (!is.null(norm_combat) && !is.null(norm_combat$normalized_matrix) && normalization_method_used != "combat") {
+      alt_methods <- c(alt_methods, "ComBat")
+    }
+    if (!is.null(norm_median) && !is.null(norm_median$normalized_matrix) && normalization_method_used != "median") {
+      alt_methods <- c(alt_methods, "Median")
+    }
+    if (length(alt_methods) > 0) {
+      cat("Alternative methods available:", paste(alt_methods, collapse = ", "), "\n")
+    }
   } else {
     cat("Mode: SINGLE-BATCH\n")
     cat("Method: Median normalization (standard intra-batch step)\n")

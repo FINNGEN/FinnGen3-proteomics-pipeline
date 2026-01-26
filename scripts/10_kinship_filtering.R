@@ -252,7 +252,7 @@ select_best_sample_per_finngenid <- function(unrelated_finngenids, sample_mappin
 
   # Load comprehensive QC data if available (contains pre-calculated metrics)
   if (is.null(comprehensive_qc_data)) {
-    comprehensive_qc_path <- get_output_path("05d", "comprehensive_outliers_list", batch_id, "phenotypes", "tsv", config = config)
+    comprehensive_qc_path <- get_output_path("05d", "05d_comprehensive_outliers_list", batch_id, "phenotypes", "tsv", config = config)
     if (file.exists(comprehensive_qc_path)) {
       comprehensive_qc_data <- fread(comprehensive_qc_path)
       log_info("Loaded comprehensive QC data: {nrow(comprehensive_qc_data)} samples")
@@ -702,7 +702,7 @@ main <- function() {
 
       # Select best SampleID per FINNGENID using quality-based selection
       # Load comprehensive QC data for pre-calculated metrics
-      comprehensive_qc_path <- get_output_path("05d", "comprehensive_outliers_list", batch_id, "phenotypes", "tsv", config = config)
+      comprehensive_qc_path <- get_output_path("05d", "05d_comprehensive_outliers_list", batch_id, "phenotypes", "tsv", config = config)
       comprehensive_qc_data <- NULL
       if (file.exists(comprehensive_qc_path)) {
         comprehensive_qc_data <- fread(comprehensive_qc_path)

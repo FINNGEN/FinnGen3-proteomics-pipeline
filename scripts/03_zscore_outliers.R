@@ -235,7 +235,7 @@ create_integrated_outlier_tracking <- function(zscore_outliers, metadata = NULL,
   pca_file <- get_output_path("01", "pca_outliers_by_source", batch_id, "outliers", "tsv", config = config)
   sex_file <- get_output_path("04", "sex_mismatches", batch_id, "outliers", "tsv", config = config)
   tech_file <- get_output_path("02", "technical_outlier_summary", batch_id, "outliers", "tsv", config = config)
-  pqtl_file <- get_output_path("05b", "pqtl_outliers", batch_id, "outliers", "tsv", config = config)
+  pqtl_file <- get_output_path("05b", "05b_pqtl_outliers", batch_id, "outliers", "tsv", config = config)
 
   # Initialize empty integrated table
   all_samples <- character()
@@ -335,7 +335,12 @@ create_integrated_outlier_tracking <- function(zscore_outliers, metadata = NULL,
   # #endregion
 
   if (!is.null(pca_outliers) && nrow(pca_outliers) > 0) {
-    meta_cols <- pca_outliers[, .(SampleID, FINNGENID, BIOBANK_PLASMA, DISEASE_GROUP)]
+    # Make DISEASE_GROUP optional (may not exist for all batches)
+    available_cols <- c("SampleID", "FINNGENID", "BIOBANK_PLASMA")
+    if ("DISEASE_GROUP" %in% colnames(pca_outliers)) {
+      available_cols <- c(available_cols, "DISEASE_GROUP")
+    }
+    meta_cols <- pca_outliers[, ..available_cols]
     integrated <- merge(integrated, meta_cols, by = "SampleID", all.x = TRUE)
 
     # #region agent log

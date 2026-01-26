@@ -382,14 +382,18 @@ main <- function() {
 
     # step 05b: pQTL outliers
     # Try multiple possible file naming patterns (step_num can be "05" or "05b")
-    pqtl_path <- get_output_path("05b", "pqtl_outliers", batch_id, "outliers", "tsv", config = config)
+    pqtl_path <- get_output_path("05b", "05b_pqtl_outliers", batch_id, "outliers", "tsv", config = config)
     if (!file.exists(pqtl_path)) {
-        # Fallback 1: Try with step prefix using "05b"
-        pqtl_path <- get_output_path("05b", "05b_pqtl_outliers", batch_id, "outliers", "tsv", config = config)
+        # Fallback 1: Try with step prefix using "05b" (backward compatibility)
+        pqtl_path <- get_output_path("05b", "pqtl_outliers", batch_id, "outliers", "tsv", config = config)
     }
     if (!file.exists(pqtl_path)) {
-        # Fallback 2: Try with step "05" (actual step_num from script name)
+        # Fallback 2: Try with step "05" and old format (backward compatibility)
         pqtl_path <- get_output_path("05", "05b_pqtl_outliers", batch_id, "outliers", "tsv", config = config)
+    }
+    if (!file.exists(pqtl_path)) {
+        # Fallback 3: Try with step "05b" and old format (backward compatibility)
+        pqtl_path <- get_output_path("05b", "pqtl_outliers", batch_id, "outliers", "tsv", config = config)
     }
     if (file.exists(pqtl_path)) {
         pqtl_dt <- fread(pqtl_path)
@@ -789,10 +793,10 @@ main <- function() {
     outlier_tracking_plots <- create_comprehensive_outlier_tracking_plot(all_samples)
 
     # Save individual plots
-    method_counts_path <- get_output_path(step_num, "outlier_method_counts", batch_id, "outliers", "pdf", config = config)
-    n_methods_dist_path <- get_output_path(step_num, "outlier_multi_method_dist", batch_id, "outliers", "pdf", config = config)
-    overlap_patterns_path <- get_output_path(step_num, "outlier_overlap_patterns", batch_id, "outliers", "pdf", config = config)
-    tracking_combined_path <- get_output_path(step_num, "outlier_tracking_combined", batch_id, "outliers", "pdf", config = config)
+    method_counts_path <- get_output_path(step_num, "05d_outlier_method_counts", batch_id, "outliers", "pdf", config = config)
+    n_methods_dist_path <- get_output_path(step_num, "05d_outlier_multi_method_dist", batch_id, "outliers", "pdf", config = config)
+    overlap_patterns_path <- get_output_path(step_num, "05d_outlier_overlap_patterns", batch_id, "outliers", "pdf", config = config)
+    tracking_combined_path <- get_output_path(step_num, "05d_outlier_tracking_combined", batch_id, "outliers", "pdf", config = config)
 
     ensure_output_dir(method_counts_path)
     ensure_output_dir(n_methods_dist_path)
@@ -851,9 +855,9 @@ main <- function() {
     outlier_list <- outlier_list[, ..col_order]
 
     # Save using path_utils naming convention
-    output1_path <- get_output_path("05d", "comprehensive_outliers_list",
+    output1_path <- get_output_path("05d", "05d_comprehensive_outliers_list",
                                     batch_id, "phenotypes", "tsv", config = config)
-    output1_parquet_path <- get_output_path("05d", "comprehensive_outliers_list",
+    output1_parquet_path <- get_output_path("05d", "05d_comprehensive_outliers_list",
                                            batch_id, "phenotypes", "parquet", config = config)
     ensure_output_dir(output1_path)
     ensure_output_dir(output1_parquet_path)
@@ -922,9 +926,9 @@ main <- function() {
     annotated_metadata <- annotated_metadata[, ..final_col_order]
 
     # Save using path_utils naming convention
-    output2_path <- get_output_path("05d", "qc_annotated_metadata",
+    output2_path <- get_output_path("05d", "05d_qc_annotated_metadata",
                                     batch_id, "phenotypes", "tsv", config = config)
-    output2_parquet_path <- get_output_path("05d", "qc_annotated_metadata",
+    output2_parquet_path <- get_output_path("05d", "05d_qc_annotated_metadata",
                                            batch_id, "phenotypes", "parquet", config = config)
     ensure_output_dir(output2_path)
     ensure_output_dir(output2_parquet_path)
@@ -980,7 +984,7 @@ main <- function() {
 
     # Save using path_utils naming convention
     # Output 3a: Clean NPX Matrix with all proteins (including control probes)
-    output3_path <- get_output_path("05d", "npx_matrix_all_qc_passed",
+    output3_path <- get_output_path("05d", "05d_npx_matrix_all_qc_passed",
                                     batch_id, "phenotypes", "rds", config = config)
     ensure_output_dir(output3_path)
     saveRDS(clean_npx_matrix, output3_path)
@@ -1030,7 +1034,7 @@ main <- function() {
         }
 
         # Save biological-only RDS
-        output3b_rds_path <- get_output_path("05d", "npx_matrix_all_qc_passed_biological_only",
+        output3b_rds_path <- get_output_path("05d", "05d_npx_matrix_all_qc_passed_biological_only",
                                             batch_id, "phenotypes", "rds", config = config)
         ensure_output_dir(output3b_rds_path)
         saveRDS(biological_npx_matrix, output3b_rds_path)
@@ -1041,14 +1045,14 @@ main <- function() {
         biological_dt <- matrix_to_dt(biological_npx_matrix)
 
         # Save biological-only Parquet
-        output3b_parquet_path <- get_output_path("05d", "npx_matrix_all_qc_passed_biological_only",
+        output3b_parquet_path <- get_output_path("05d", "05d_npx_matrix_all_qc_passed_biological_only",
                                                 batch_id, "phenotypes", "parquet", config = config)
         ensure_output_dir(output3b_parquet_path)
         write_parquet(biological_dt, output3b_parquet_path)
         log_info("  Saved biological-only Parquet: {output3b_parquet_path}")
 
         # Save biological-only TSV
-        output3b_tsv_path <- get_output_path("05d", "npx_matrix_all_qc_passed_biological_only",
+        output3b_tsv_path <- get_output_path("05d", "05d_npx_matrix_all_qc_passed_biological_only",
                                             batch_id, "phenotypes", "tsv", config = config)
         ensure_output_dir(output3b_tsv_path)
         fwrite(biological_dt, output3b_tsv_path, sep = "\t")

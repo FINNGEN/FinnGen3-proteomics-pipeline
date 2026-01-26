@@ -74,7 +74,7 @@ load_comprehensive_outlier_list <- function(batch_id, config) {
   log_info("Loading comprehensive outlier list from Step 05d")
 
   # Use comprehensive outlier list from Step 05d (includes ALL QC steps)
-  comprehensive_outliers_path <- get_output_path("05d", "comprehensive_outliers_list", batch_id, "phenotypes", "tsv", config = config)
+  comprehensive_outliers_path <- get_output_path("05d", "05d_comprehensive_outliers_list", batch_id, "phenotypes", "tsv", config = config)
 
   if (!file.exists(comprehensive_outliers_path)) {
     log_warn("Comprehensive outlier list not found: {comprehensive_outliers_path}")

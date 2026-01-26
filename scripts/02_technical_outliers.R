@@ -115,6 +115,16 @@ detect_plate_outliers <- function(samples_data, npx_matrix) {
 detect_batch_effects <- function(samples_data, metadata) {
   log_info("Detecting batch effects")
 
+  # Check if APPROX_TIMESTAMP_COLLECTION exists
+  if (!"APPROX_TIMESTAMP_COLLECTION" %in% colnames(metadata)) {
+    log_warn("APPROX_TIMESTAMP_COLLECTION column not found in metadata. Skipping batch effect detection by collection month.")
+    return(list(
+      batch_stats = data.table(collection_month = character(), n_samples = integer(), mean_npx = numeric(), sd_npx = numeric(), outlier = logical()),
+      outlier_batches = character(),
+      samples_from_outlier_batches = character()
+    ))
+  }
+
   # Merge samples with metadata
   sample_batch <- merge(
     samples_data[, .(SampleID, PlateID, NPX)],
@@ -166,6 +176,23 @@ detect_batch_effects <- function(samples_data, metadata) {
 
 # Function to detect processing time outliers
 detect_processing_outliers <- function(metadata) {
+  # Check if required timestamp columns exist
+  if (!"APPROX_TIMESTAMP_COLLECTION" %in% colnames(metadata)) {
+    log_warn("APPROX_TIMESTAMP_COLLECTION column not found in metadata. Skipping processing time outlier detection.")
+    return(list(
+      processing_stats = data.table(SAMPLE_ID = character(), processing_hours = numeric(), processing_outlier = logical()),
+      processing_outliers = character()
+    ))
+  }
+  
+  if (!"APPROX_TIMESTAMP_FREEZING" %in% colnames(metadata)) {
+    log_warn("APPROX_TIMESTAMP_FREEZING column not found in metadata. Skipping processing time outlier detection.")
+    return(list(
+      processing_stats = data.table(SAMPLE_ID = character(), processing_hours = numeric(), processing_outlier = logical()),
+      processing_outliers = character()
+    ))
+  }
+
   log_info("Detecting processing time outliers")
 
   # Calculate processing time (time from collection to freezing)
@@ -176,6 +203,14 @@ detect_processing_outliers <- function(metadata) {
 
   # Remove invalid processing times
   metadata_time <- metadata_time[!is.na(processing_hours) & processing_hours > 0 & processing_hours < 48]
+
+  if (nrow(metadata_time) == 0) {
+    log_warn("No valid processing times found. Skipping processing time outlier detection.")
+    return(list(
+      processing_stats = data.table(SAMPLE_ID = character(), processing_hours = numeric(), processing_outlier = logical()),
+      processing_outliers = character()
+    ))
+  }
 
   # Identify outliers based on processing time (5-MAD, aligned with 4-SD in z-score step)
   proc_center <- median(metadata_time$processing_hours, na.rm = TRUE)

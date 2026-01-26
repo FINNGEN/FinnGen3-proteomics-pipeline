@@ -573,13 +573,18 @@ write_outlier_sources <- function(outliers_orig, metadata) {
   if (!is.null(metadata)) {
     # Ensure disease group is present where possible
     metadata_with_disease <- add_disease_group(metadata)
-    cols <- intersect(c("SAMPLE_ID", "FINNGENID", "BIOBANK_PLASMA", "PlateID", "DISEASE_GROUP"), colnames(metadata_with_disease))
+    # Only include DISEASE_GROUP if it exists (may not exist if no disease indicator columns present)
+    cols_to_check <- c("SAMPLE_ID", "FINNGENID", "BIOBANK_PLASMA", "PlateID", "DISEASE_GROUP")
+    cols <- intersect(cols_to_check, colnames(metadata_with_disease))
     if (length(cols) > 0 && "SAMPLE_ID" %in% cols) {
       meta_sel <- metadata_with_disease[, ..cols]
       dt <- merge(dt, meta_sel, by.x = "SampleID", by.y = "SAMPLE_ID", all.x = TRUE)
     }
   }
-  setcolorder(dt, c("FINNGENID", setdiff(names(dt), c("FINNGENID"))))
+  # Only reorder if FINNGENID exists
+  if ("FINNGENID" %in% names(dt)) {
+    setcolorder(dt, c("FINNGENID", setdiff(names(dt), c("FINNGENID"))))
+  }
   path <- get_output_path(step_num, "pca_outliers_by_source", batch_id, "outliers", "tsv", config = config)
   ensure_output_dir(path)
   fwrite(dt, path, sep = "\t")
@@ -754,10 +759,13 @@ create_genetic_pc_plots <- function(pca_scores, outliers_orig, metadata, covaria
   meta_sub <- metadata[SAMPLE_ID %in% proteo_samples, .(SAMPLE_ID, FINNGENID, BIOBANK_PLASMA)]
   meta_sub <- unique(meta_sub, by = "FINNGENID")
 
-  # Add disease group
+  # Add disease group (if available)
   md_dis <- add_disease_group(metadata)
-  dis_sub <- md_dis[SAMPLE_ID %in% proteo_samples, .(SAMPLE_ID, FINNGENID, DISEASE_GROUP)]
-  dis_sub <- unique(dis_sub, by = "FINNGENID")
+  dis_sub <- NULL
+  if (!is.null(md_dis) && "DISEASE_GROUP" %in% colnames(md_dis)) {
+    dis_sub <- md_dis[SAMPLE_ID %in% proteo_samples, .(SAMPLE_ID, FINNGENID, DISEASE_GROUP)]
+    dis_sub <- unique(dis_sub, by = "FINNGENID")
+  }
 
   # Genetic PCs
   covar <- try(fread(cmd = paste("zcat", covariate_file)), silent = TRUE)
@@ -765,7 +773,11 @@ create_genetic_pc_plots <- function(pca_scores, outliers_orig, metadata, covaria
   gen <- covar[, .(FINNGENID = IID, gPC1 = PC1, gPC2 = PC2, gPC3 = PC3, gPC4 = PC4)]
 
   df <- merge(gen, meta_sub[, .(FINNGENID, BIOBANK_PLASMA)], by = "FINNGENID", all.x = TRUE)
-  df <- merge(df, dis_sub[, .(FINNGENID, DISEASE_GROUP)], by = "FINNGENID", all.x = TRUE)
+  if (!is.null(dis_sub)) {
+    df <- merge(df, dis_sub[, .(FINNGENID, DISEASE_GROUP)], by = "FINNGENID", all.x = TRUE)
+  } else {
+    df[, DISEASE_GROUP := "None"]
+  }
 
   # Outliers by FINNGENID
   outlier_finngen <- unique(metadata[SAMPLE_ID %in% outliers_orig$outliers_all, FINNGENID])
