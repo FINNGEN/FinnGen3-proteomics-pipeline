@@ -342,19 +342,21 @@ main <- function() {
     log_info("Using RAW NPX data as input (npx_matrix_qc.rds)")
     npx_matrix_path <- get_output_path("00", "npx_matrix_qc", batch_id, "qc", config = config)
     if (!file.exists(npx_matrix_path)) {
-      stop("NPX matrix file not found: {npx_matrix_path}")
+      log_error("NPX matrix file not found: {npx_matrix_path}")
+      stop(paste0("NPX matrix file not found: ", npx_matrix_path))
     }
     npx_matrix <- readRDS(npx_matrix_path)
   } else if(input_choice == "step08_median") {
     log_info("Using step 06 MEDIAN normalized data as input (08_npx_matrix_normalized_median.rds)")
     npx_matrix_path <- get_output_path("06", "npx_matrix_normalized_median", batch_id, "normalized", config = config)
     if (!file.exists(npx_matrix_path)) {
-      stop("step 06 normalized matrix file not found: {npx_matrix_path}")
+      log_error("step 06 normalized matrix file not found: {npx_matrix_path}")
+      stop(paste0("step 06 normalized matrix file not found: ", npx_matrix_path))
     }
     npx_matrix <- readRDS(npx_matrix_path)
   } else {
     log_error("Invalid enhanced_bridge_input: {input_choice}. Must be 'raw' or 'step08_median'")
-    stop("Invalid configuration")
+    stop(paste0("Invalid configuration: enhanced_bridge_input must be 'raw' or 'step08_median', got: ", input_choice))
   }
 
   bridge_result_path <- get_output_path("00", "bridge_samples_identified", batch_id, "normalized", config = config)

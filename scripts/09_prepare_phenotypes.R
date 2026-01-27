@@ -542,14 +542,9 @@ main <- function() {
   # Save outputs
   log_info("Saving phenotype matrices and information")
 
-  # Determine output prefix based on aggregation mode
-  if (aggregate_output) {
-    output_prefix <- "batch2_"
-    log_info("Aggregation mode: Saving batch 2 outputs with 'batch2_' prefix")
-  } else {
-    output_prefix <- "11_"
-    log_info("Single-batch mode: Saving outputs with '11_' prefix")
-  }
+  # NOTE: Always use step number prefix (09_) - removed legacy 11_ prefix logic
+  # The 11_ prefix was a remnant from before refactoring and should not be used
+  # Step 09 outputs should always use 09_ prefix regardless of aggregation mode
 
   # Save matrices with batch-aware paths
   phenotype_matrix_path <- get_output_path(step_num, "phenotype_matrix", batch_id, "phenotypes", config = config)

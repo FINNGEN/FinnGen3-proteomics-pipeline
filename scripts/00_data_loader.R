@@ -58,6 +58,24 @@ ensure_output_dir(log_path)
 log_appender(appender_file(log_path))
 log_info("Starting data loader for batch: {batch_id}")
 
+# Function to identify control probes (24 control aptamers: 8 incubation, 8 extension, 8 amplification)
+# These are technical controls and should be removed early in the pipeline for robustness
+identify_control_probes <- function(protein_names) {
+  control_patterns <- c(
+    "Incubation control",
+    "Extension control",
+    "Amplification control"
+  )
+
+  control_probes <- character(0)
+  for (pattern in control_patterns) {
+    matches <- grep(pattern, protein_names, ignore.case = TRUE, value = TRUE)
+    control_probes <- c(control_probes, matches)
+  }
+
+  return(control_probes)
+}
+
 # Function to detect file format from extension
 detect_file_format <- function(file_path) {
   ext <- tolower(tools::file_ext(file_path))
@@ -245,8 +263,37 @@ load_bridging_samples <- function(bridging_file) {
 
   log_info("Loading bridging samples from: {bridging_file}")
 
-  bridging <- fread(bridging_file, sep = ";")
-  log_info("Bridging samples: {nrow(bridging)}")
+  # Try to detect file format (TSV or semicolon-separated)
+  first_line <- readLines(bridging_file, n = 1)
+  if (grepl("\t", first_line)) {
+    # TSV format (new unified format)
+    bridging <- fread(bridging_file, sep = "\t")
+    log_info("Detected TSV format (unified bridging metadata)")
+    
+    # Validate required columns
+    required_cols <- c("FINNGENID")
+    if (!all(required_cols %in% names(bridging))) {
+      log_warn("Unified bridging file missing required columns. Expected: {paste(required_cols, collapse=', ')}")
+      log_warn("Found columns: {paste(names(bridging), collapse=', ')}")
+      return(data.table())
+    }
+    
+    # Filter to only include FINNGENIDs with "FG" prefix
+    n_before <- nrow(bridging)
+    bridging <- bridging[grepl("^FG", FINNGENID)]
+    n_after <- nrow(bridging)
+    
+    if (n_before > n_after) {
+      log_warn("Filtered out {n_before - n_after} entries that don't have FINNGENID starting with 'FG' prefix")
+    }
+    
+    log_info("Loaded {nrow(bridging)} bridging samples from unified metadata (all with 'FG' prefix FINNGENIDs)")
+  } else {
+    # Legacy semicolon-separated format (for backward compatibility)
+    bridging <- fread(bridging_file, sep = ";")
+    log_info("Detected semicolon-separated format (legacy)")
+    log_info("Bridging samples: {nrow(bridging)}")
+  }
 
   return(bridging)
 }
@@ -291,7 +338,7 @@ load_bridging_finngenid_map <- function(mapping_file) {
 }
 
 # Function to create sample mapping
-create_sample_mapping <- function(sample_ids, metadata, bridging_finngenid_map = NULL) {
+create_sample_mapping <- function(sample_ids, metadata, bridging_samples = NULL, bridging_finngenid_map = NULL, batch_id = NULL) {
   log_info("Creating sample mapping")
 
   # Create base mapping table
@@ -309,9 +356,63 @@ create_sample_mapping <- function(sample_ids, metadata, bridging_finngenid_map =
     all.x = TRUE
   )
 
-  # Supplement with FINNGENIDs from EA5→FG3 mapping for bridging samples
+  # Identify bridging samples using unified bridging metadata (new method)
+  bridging_finngenids <- character(0)
+  if (!is.null(bridging_samples) && nrow(bridging_samples) > 0) {
+    # Check if this is the new unified format (has FINNGENID column)
+    if ("FINNGENID" %in% names(bridging_samples)) {
+      log_info("Using unified bridging metadata format (FINNGENID-based)")
+      
+      # Determine which batch flags to check based on batch_id
+      # Handle both logical (TRUE/FALSE) and character ("TRUE"/"FALSE") boolean values
+      if (!is.null(batch_id)) {
+        if (batch_id == "batch_01") {
+          # For batch_01, bridging samples are those in both batch_01 and batch_02
+          # CRITICAL: Exclude EA5 samples (in_Batch_00=TRUE) - these are for Batch_00↔Batch_02 bridging, not Batch_01↔Batch_02
+          # We want ONLY the 24 direct Batch_01↔Batch_02 samples (not the 6 EA5 samples in all three batches)
+          if ("in_Batch_01" %in% names(bridging_samples) && "in_Batch_02" %in% names(bridging_samples)) {
+            # Robust boolean filtering: handles both logical and character representations
+            batch_01_true <- bridging_samples$in_Batch_01 == TRUE | bridging_samples$in_Batch_01 == "TRUE" | bridging_samples$in_Batch_01 == "T"
+            batch_02_true <- bridging_samples$in_Batch_02 == TRUE | bridging_samples$in_Batch_02 == "TRUE" | bridging_samples$in_Batch_02 == "T"
+            # Exclude EA5 samples (in_Batch_00=TRUE) - these are primarily for Batch_00↔Batch_02 bridging
+            if ("in_Batch_00" %in% names(bridging_samples)) {
+              batch_00_false <- bridging_samples$in_Batch_00 == FALSE | bridging_samples$in_Batch_00 == "FALSE" | bridging_samples$in_Batch_00 == "F"
+              bridging_finngenids <- bridging_samples[batch_01_true & batch_02_true & batch_00_false]$FINNGENID
+              log_info("Identified {length(bridging_finngenids)} bridging samples for batch_01 (direct Batch_01↔Batch_02, excluding EA5 samples)")
+            } else {
+              # Fallback if in_Batch_00 column doesn't exist
+              bridging_finngenids <- bridging_samples[batch_01_true & batch_02_true]$FINNGENID
+              log_info("Identified {length(bridging_finngenids)} bridging samples for batch_01 (present in both batch_01 and batch_02)")
+            }
+          }
+        } else if (batch_id == "batch_02") {
+          # For batch_02, bridging samples are those in batch_02 and either batch_00 or batch_01
+          # This includes: 50 EA5 samples (Batch_00 ↔ Batch_02) + 24 direct Batch_01↔Batch_02 samples = 74 unique FINNGENIDs
+          # Note: If duplicate FINNGENIDs exist in the sample mapping, the count of SampleIDs flagged as bridging
+          # may exceed 74 (e.g., 75 if one bridging FINNGENID appears twice in the mapping)
+          if ("in_Batch_02" %in% names(bridging_samples)) {
+            # Robust boolean filtering: handles both logical and character representations
+            batch_02_true <- bridging_samples$in_Batch_02 == TRUE | bridging_samples$in_Batch_02 == "TRUE" | bridging_samples$in_Batch_02 == "T"
+            bridging_finngenids <- bridging_samples[batch_02_true]$FINNGENID
+            log_info("Identified {length(bridging_finngenids)} unique bridging FINNGENIDs for batch_02")
+            log_info("  Note: Actual number of SampleIDs flagged as bridging may be higher if duplicate FINNGENIDs exist in sample mapping")
+          }
+        }
+      } else {
+        # If batch_id not provided, use all bridging samples
+        bridging_finngenids <- unique(bridging_samples$FINNGENID)
+        log_info("Identified {length(bridging_finngenids)} total bridging samples (batch_id not specified)")
+      }
+    } else {
+      # Legacy format - use PSEUDO_ID matching (for backward compatibility)
+      log_info("Using legacy bridging samples format (PSEUDO_ID-based)")
+      # This would require the old bridging_finngenid_map logic
+    }
+  }
+
+  # Supplement with FINNGENIDs from EA5→FG3 mapping for bridging samples (legacy method, for backward compatibility)
   if (!is.null(bridging_finngenid_map)) {
-    log_info("Supplementing sample mapping with FINNGENIDs from EA5→FG3 mapping")
+    log_info("Supplementing sample mapping with FINNGENIDs from EA5→FG3 mapping (legacy method)")
 
     # Merge the EA5→FG3 mapping for samples without FINNGENID
     mapping <- merge(
@@ -330,12 +431,20 @@ create_sample_mapping <- function(sample_ids, metadata, bridging_finngenid_map =
     n_after <- sum(!is.na(mapping$FINNGENID))
 
     log_info("Supplemented {n_after - n_before} samples with FINNGENIDs from EA5→FG3 mapping")
+    
+    # Also add EA5 FINNGENIDs to bridging list if they match
+    if (nrow(bridging_finngenid_map) > 0) {
+      ea5_bridging_fgids <- unique(bridging_finngenid_map$FINNGENID)
+      bridging_finngenids <- unique(c(bridging_finngenids, ea5_bridging_fgids))
+    }
   }
 
   # Flag sample types (AG samples already removed, so only FinnGen and Bridging)
+  # Bridging samples are identified by FINNGENID matching, not by SampleID pattern
   mapping[, sample_type := case_when(
     grepl("CONTROL", SampleID) ~ "Control",
-    grepl("EA5_OLI", SampleID) ~ "Bridging",
+    !is.na(FINNGENID) & FINNGENID %in% bridging_finngenids ~ "Bridging",
+    grepl("EA5_OLI", SampleID) ~ "Bridging",  # Legacy: EA5_OLI pattern
     !is.na(FINNGENID) ~ "FinnGen",
     TRUE ~ "Unknown"
   )]
@@ -508,10 +617,39 @@ main <- function() {
   npx_matrix <- load_npx_matrix(npx_matrix_file)
   metadata <- load_metadata(metadata_file)
 
+  # CRITICAL: Remove control aptamers (24 technical controls) early in the pipeline
+  # This ensures both batches have the same number of biological proteins (5416)
+  # and prevents dimension mismatches in cross-batch normalization
+  log_info("Removing control aptamers (technical controls) from NPX matrix...")
+  protein_names <- colnames(npx_matrix)
+  control_probes <- identify_control_probes(protein_names)
+  
+  if (length(control_probes) > 0) {
+    log_info("  Control aptamers identified: {length(control_probes)}")
+    incubation <- sum(grepl("Incubation control", control_probes, ignore.case = TRUE))
+    extension <- sum(grepl("Extension control", control_probes, ignore.case = TRUE))
+    amplification <- sum(grepl("Amplification control", control_probes, ignore.case = TRUE))
+    log_info("    - Incubation controls: {incubation}")
+    log_info("    - Extension controls: {extension}")
+    log_info("    - Amplification controls: {amplification}")
+    
+    # Remove control probes
+    biological_proteins <- setdiff(protein_names, control_probes)
+    npx_matrix <- npx_matrix[, biological_proteins, drop = FALSE]
+    log_info("  Removed {length(control_probes)} control aptamers")
+    log_info("  Biological proteins retained: {ncol(npx_matrix)}")
+    log_info("  Matrix dimensions after control removal: {nrow(npx_matrix)} samples × {ncol(npx_matrix)} proteins")
+  } else {
+    log_info("  No control aptamers found in matrix (may have been removed previously)")
+    log_info("  Biological proteins: {ncol(npx_matrix)}")
+  }
+
   # Load optional bridging sample information
   bridging_samples <- load_bridging_samples(bridging_samples_file)
   bridging_finngenid_map <- NULL
-  if (!is.null(bridging_samples_finngenid_map_file)) {
+  # Only load legacy EA5 mapping if bridging_samples_file doesn't contain FINNGENIDs (backward compatibility)
+  if (!is.null(bridging_samples_finngenid_map_file) && 
+      (is.null(bridging_samples) || nrow(bridging_samples) == 0 || !"FINNGENID" %in% names(bridging_samples))) {
     bridging_finngenid_map <- load_bridging_finngenid_map(bridging_samples_finngenid_map_file)
   }
 
@@ -560,7 +698,7 @@ main <- function() {
   # Create sample mapping
   log_info("Creating sample mapping...")
   sample_ids <- rownames(npx_matrix)
-  sample_mapping <- create_sample_mapping(sample_ids, metadata, bridging_finngenid_map)
+  sample_mapping <- create_sample_mapping(sample_ids, metadata, bridging_samples, bridging_finngenid_map, batch_id)
 
   # Validate mapping
   validation <- validate_mapping(sample_mapping, npx_matrix)

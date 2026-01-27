@@ -667,22 +667,58 @@ main <- function() {
   # Prepare batch information for ComBat
   # In multi-batch mode, we need to distinguish between actual batches (batch_01, batch_02)
   # For ComBat to work properly across batches, we should use batch_id, not PlateID
+  # CRITICAL: For cross-batch ComBat, we need to combine both batches' matrices
   if (multi_batch_mode) {
-    # Create batch_info with actual batch IDs
-    # For current batch, all samples get the current batch_id
-    # If we have reference batch data, we could combine, but for now use current batch only
-    batch_info <- data.table(
-      SampleID = rownames(npx_matrix),
-      batch = batch_id
-    )
-    log_info("Prepared batch_info for ComBat: {nrow(batch_info)} samples from {batch_id}")
-    
-    # If we have reference batch matrix, we could combine both batches for better ComBat normalization
-    # But for now, ComBat will normalize within the current batch only (as fallback when bridge fails)
+    # Check if we have reference batch data for cross-batch ComBat
     if (!is.null(batch1_npx_matrix) && other_batch_id != batch_id) {
-      log_info("Note: ComBat is being applied to current batch only ({batch_id})")
-      log_info("  For full cross-batch ComBat, both batches would need to be combined")
-      log_info("  This is acceptable as a fallback when bridge normalization fails")
+      # Combine both batches for cross-batch ComBat normalization
+      log_info("Preparing cross-batch ComBat: Combining {batch_id} and {other_batch_id} matrices")
+      
+      # Find common proteins between batches
+      common_proteins <- intersect(colnames(npx_matrix), colnames(batch1_npx_matrix))
+      if (length(common_proteins) == 0) {
+        log_warn("No common proteins found between batches - cannot perform cross-batch ComBat")
+        log_warn("Falling back to single-batch batch_info")
+        batch_info <- data.table(
+          SampleID = rownames(npx_matrix),
+          batch = batch_id
+        )
+      } else {
+        log_info("Found {length(common_proteins)} common proteins for cross-batch ComBat")
+        
+        # Subset both matrices to common proteins
+        npx_matrix_common <- npx_matrix[, common_proteins, drop = FALSE]
+        batch1_npx_matrix_common <- batch1_npx_matrix[, common_proteins, drop = FALSE]
+        
+        # Combine matrices (will be used later for ComBat)
+        combined_matrix <- rbind(npx_matrix_common, batch1_npx_matrix_common)
+        
+        # Create batch_info with both batches
+        batch_info <- data.table(
+          SampleID = rownames(combined_matrix),
+          batch = c(rep(batch_id, nrow(npx_matrix_common)), 
+                   rep(other_batch_id, nrow(batch1_npx_matrix_common)))
+        )
+        
+        log_info("Prepared cross-batch batch_info for ComBat: {nrow(batch_info)} samples")
+        log_info("  - {batch_id}: {sum(batch_info$batch == batch_id)} samples")
+        log_info("  - {other_batch_id}: {sum(batch_info$batch == other_batch_id)} samples")
+        
+        # Store combined matrix for ComBat use (will be passed to normalize_combat)
+        # Note: We'll need to extract the current batch's portion after normalization
+        attr(batch_info, "combined_matrix") <- combined_matrix
+        attr(batch_info, "n_current_batch") <- nrow(npx_matrix_common)
+        attr(batch_info, "common_proteins") <- common_proteins  # Store common proteins for evaluation
+      }
+    } else {
+      # No reference batch data available - use current batch only
+      batch_info <- data.table(
+        SampleID = rownames(npx_matrix),
+        batch = batch_id
+      )
+      log_info("Prepared batch_info for ComBat: {nrow(batch_info)} samples from {batch_id}")
+      log_warn("Reference batch matrix not available - ComBat will normalize within current batch only")
+      log_warn("  This may fail if only one batch is present (ComBat requires 2+ batches)")
     }
   } else {
     # Single-batch mode: Use PlateID as batch (original behavior)
@@ -822,12 +858,43 @@ main <- function() {
       # Step 2: Try ComBat normalization (fallback 1)
       # NOTE: ComBat normalization is ONLY applicable in multi-batch (cross-batch) mode
       log_info("Attempting ComBat normalization (fallback method 1 for cross-batch correction)...")
-      norm_combat <- tryCatch({
-        normalize_data(npx_matrix, method = "combat", batch_info = batch_info, multi_batch_mode = TRUE)
-      }, error = function(e) {
-        log_warn("ComBat normalization failed: {e$message}")
-        NULL
-      })
+      
+      # Check if we have combined matrix for cross-batch ComBat
+      combined_matrix <- attr(batch_info, "combined_matrix")
+      if (!is.null(combined_matrix)) {
+        # Use combined matrix for cross-batch ComBat
+        log_info("Using combined batch matrix for cross-batch ComBat normalization")
+        n_current_batch <- attr(batch_info, "n_current_batch")
+        
+        norm_combat <- tryCatch({
+          # Apply ComBat to combined matrix
+          combat_result <- normalize_data(combined_matrix, method = "combat", batch_info = batch_info, multi_batch_mode = TRUE)
+          
+          # Extract only the current batch's portion from normalized result
+          if (!is.null(combat_result) && !is.null(combat_result$normalized_matrix)) {
+            current_batch_normalized <- combat_result$normalized_matrix[1:n_current_batch, , drop = FALSE]
+            combat_result$normalized_matrix <- current_batch_normalized
+            combat_result$batch_vector <- combat_result$batch_vector[1:n_current_batch]
+            # Store common proteins for evaluation (needed to subset raw matrix)
+            common_proteins <- attr(batch_info, "common_proteins")
+            if (!is.null(common_proteins)) {
+              combat_result$common_proteins <- common_proteins
+            }
+          }
+          combat_result
+        }, error = function(e) {
+          log_warn("Cross-batch ComBat normalization failed: {e$message}")
+          NULL
+        })
+      } else {
+        # Fallback to single-batch ComBat (may fail if only one batch)
+        norm_combat <- tryCatch({
+          normalize_data(npx_matrix, method = "combat", batch_info = batch_info, multi_batch_mode = TRUE)
+        }, error = function(e) {
+          log_warn("ComBat normalization failed: {e$message}")
+          NULL
+        })
+      }
 
       if (!is.null(norm_combat) && !is.null(norm_combat$normalized_matrix)) {
         # Check if ComBat actually succeeded or fell back to median
@@ -878,12 +945,40 @@ main <- function() {
     }
 
     if (normalization_method_used != "combat" && is.null(norm_combat)) {
-      norm_combat <- tryCatch({
-        normalize_data(npx_matrix, method = "combat", batch_info = batch_info, multi_batch_mode = TRUE)
-      }, error = function(e) {
-        log_warn("ComBat normalization (for comparison) failed: {e$message}")
-        NULL
-      })
+      # Check if we have combined matrix for cross-batch ComBat
+      combined_matrix <- attr(batch_info, "combined_matrix")
+      if (!is.null(combined_matrix)) {
+        log_info("Generating ComBat normalization (for comparison) using combined batch matrix")
+        n_current_batch <- attr(batch_info, "n_current_batch")
+        
+        norm_combat <- tryCatch({
+          # Apply ComBat to combined matrix
+          combat_result <- normalize_data(combined_matrix, method = "combat", batch_info = batch_info, multi_batch_mode = TRUE)
+          
+          # Extract only the current batch's portion from normalized result
+          if (!is.null(combat_result) && !is.null(combat_result$normalized_matrix)) {
+            current_batch_normalized <- combat_result$normalized_matrix[1:n_current_batch, , drop = FALSE]
+            combat_result$normalized_matrix <- current_batch_normalized
+            combat_result$batch_vector <- combat_result$batch_vector[1:n_current_batch]
+            # Store common proteins for evaluation (needed to subset raw matrix)
+            common_proteins <- attr(batch_info, "common_proteins")
+            if (!is.null(common_proteins)) {
+              combat_result$common_proteins <- common_proteins
+            }
+          }
+          combat_result
+        }, error = function(e) {
+          log_warn("ComBat normalization (for comparison) failed: {e$message}")
+          NULL
+        })
+      } else {
+        norm_combat <- tryCatch({
+          normalize_data(npx_matrix, method = "combat", batch_info = batch_info, multi_batch_mode = TRUE)
+        }, error = function(e) {
+          log_warn("ComBat normalization (for comparison) failed: {e$message}")
+          NULL
+        })
+      }
     }
 
     if (normalization_method_used != "median" && is.null(norm_median)) {
@@ -932,7 +1027,16 @@ main <- function() {
     log_info("Primary method: {normalization_method_used}")
 
     # Evaluate primary normalization method
-    eval_primary <- evaluate_normalization(npx_matrix, normalized_result$normalized_matrix, metadata)
+    # CRITICAL: If ComBat was used as primary, it may have been applied to a subset of proteins
+    # We need to subset the raw matrix to match before evaluation
+    common_proteins_primary <- normalized_result$common_proteins
+    if (!is.null(common_proteins_primary) && length(common_proteins_primary) < ncol(npx_matrix)) {
+      log_info("Primary method (ComBat) was applied to {length(common_proteins_primary)} common proteins - subsetting raw matrix for evaluation")
+      npx_matrix_subset_primary <- npx_matrix[, common_proteins_primary, drop = FALSE]
+      eval_primary <- evaluate_normalization(npx_matrix_subset_primary, normalized_result$normalized_matrix, metadata)
+    } else {
+      eval_primary <- evaluate_normalization(npx_matrix, normalized_result$normalized_matrix, metadata)
+    }
 
     # Evaluate alternative normalisations (only if they exist and weren't used as primary)
     eval_bridge <- NULL
@@ -951,7 +1055,16 @@ main <- function() {
       if (normalization_method_used == "combat") {
         eval_combat <- eval_primary
       } else {
-        eval_combat <- evaluate_normalization(npx_matrix, norm_combat$normalized_matrix, metadata)
+        # CRITICAL: ComBat normalization may have been applied to a subset of proteins (common proteins only)
+        # We need to subset the raw matrix to match before evaluation
+        common_proteins <- norm_combat$common_proteins
+        if (!is.null(common_proteins) && length(common_proteins) < ncol(npx_matrix)) {
+          log_info("ComBat was applied to {length(common_proteins)} common proteins - subsetting raw matrix for evaluation")
+          npx_matrix_subset <- npx_matrix[, common_proteins, drop = FALSE]
+          eval_combat <- evaluate_normalization(npx_matrix_subset, norm_combat$normalized_matrix, metadata)
+        } else {
+          eval_combat <- evaluate_normalization(npx_matrix, norm_combat$normalized_matrix, metadata)
+        }
       }
     }
 
@@ -1037,7 +1150,15 @@ main <- function() {
       if (normalization_method_used == "combat") {
         plot_combat <- plot_primary
       } else {
-        plot_combat <- create_normalization_plots(npx_matrix, norm_combat$normalized_matrix, "- ComBat (Comparison)")
+        # CRITICAL: ComBat normalization may have been applied to a subset of proteins (common proteins only)
+        # We need to subset the raw matrix to match before plotting
+        common_proteins <- norm_combat$common_proteins
+        if (!is.null(common_proteins) && length(common_proteins) < ncol(npx_matrix)) {
+          npx_matrix_subset <- npx_matrix[, common_proteins, drop = FALSE]
+          plot_combat <- create_normalization_plots(npx_matrix_subset, norm_combat$normalized_matrix, "- ComBat (Comparison)")
+        } else {
+          plot_combat <- create_normalization_plots(npx_matrix, norm_combat$normalized_matrix, "- ComBat (Comparison)")
+        }
       }
     }
 

@@ -30,10 +30,11 @@ After comprehensive quality control including PCA outlier detection, technical o
 > **Note on Example Numbers**: The example results and statistics provided throughout this README are based on **FinnGen 3 Batch 02** processing. Actual results will vary depending on your specific dataset characteristics, sample size, and data quality. For detailed, batch-specific statistics and comprehensive documentation, please refer to the versioned release notes in the [`/docs/`](./docs/) directory (e.g., `DATA_RELEASE_NOTE_Dec_2025_v2.1.md` and `DATA_RELEASE_NOTE_Dec_2025_v2.1.tex`).
 
 **Expected Results** (example from FG3 Batch 02):
-- **Input**: 2,527 samples (2,477 FinnGen + 50 bridge samples)
+- **Input**: 2,527 samples (2,477 FinnGen + 50 bridge samples), 5,440 proteins
+- **After Control Removal**: 5,416 biological proteins (24 control aptamers removed in Step 00)
 - **After Initial QC**: 2,522 samples (5 samples removed with >10% missing data)
 - **Final QCed**: ~2,443 samples (96.7% retention rate from initial QC)
-- **Proteins**: 5,440 total (5,416 biological proteins after control probe removal)
+- **Proteins**: 5,416 biological proteins (constant across all batches after Step 00)
 
 ## Pipeline Architecture
 
@@ -41,11 +42,11 @@ After comprehensive quality control including PCA outlier detection, technical o
 
 ```mermaid
 flowchart TD
-    Start([Start]) --> Loader[00_data_loader.R<br/>Load NPX matrix<br/>Initial QC: Remove >10% missing<br/>Prepare analysis-ready data]
+    Start([Start]) --> Loader[00_data_loader.R<br/>Load NPX matrix<br/>Remove control aptamers (24)<br/>Initial QC: Remove >10% missing<br/>Prepare analysis-ready data]
 
-    Loader --> BaseMatrix[Base Matrix<br/>npx_matrix_analysis_ready<br/>2,522 samples<br/>After initial QC]
+    Loader --> BaseMatrix[Base Matrix<br/>npx_matrix_analysis_ready<br/>2,522 samples × 5,416 proteins<br/>After initial QC]
 
-    BaseMatrix --> PCA[01_pca_outliers.R<br/>PCA analysis<br/>SD & IQR outlier detection<br/>Uses: base matrix]
+    BaseMatrix --> PCA[01_pca_outliers.R<br/>PCA analysis<br/>Remove constant proteins<br/>SD & IQR outlier detection<br/>Uses: base matrix]
 
     BaseMatrix --> Technical[02_technical_outliers.R<br/>Plate/batch/processing outliers<br/>Sample-level QC<br/>Uses: base matrix<br/>Parallel flagging]
 
@@ -110,7 +111,7 @@ flowchart TD
     Start --> OtherBatch[Other Batches<br/>batch_01, ...]
 
     %% Reference Batch Processing (Parallel Flagging)
-    RefBatch --> Ref00[00_data_loader.R<br/>Load NPX matrix<br/>Initial QC: Remove >10% missing<br/>Prepare data]
+    RefBatch --> Ref00[00_data_loader.R<br/>Load NPX matrix<br/>Remove control aptamers (24)<br/>Initial QC: Remove >10% missing<br/>Prepare data]
     Ref00 --> RefBase[Base Matrix<br/>npx_matrix_analysis_ready]
     RefBase --> Ref01[01_pca_outliers.R<br/>PCA outlier detection<br/>Uses: base matrix]
     RefBase --> Ref02[02_technical_outliers.R<br/>Technical outlier detection<br/>Uses: base matrix<br/>Parallel flagging]
@@ -133,7 +134,7 @@ flowchart TD
     Ref11 --> RefComplete([Reference Batch<br/>Complete])
 
     %% Other Batch Processing (Parallel Flagging)
-    OtherBatch --> Other00[00_data_loader.R<br/>Load NPX matrix<br/>Initial QC: Remove >10% missing<br/>Prepare data]
+    OtherBatch --> Other00[00_data_loader.R<br/>Load NPX matrix<br/>Remove control aptamers (24)<br/>Initial QC: Remove >10% missing<br/>Prepare data]
     Other00 --> OtherBase[Base Matrix<br/>npx_matrix_analysis_ready]
     OtherBase --> Other01[01_pca_outliers.R<br/>PCA outlier detection<br/>Uses: base matrix]
     OtherBase --> Other02[02_technical_outliers.R<br/>Technical outlier detection<br/>Uses: base matrix<br/>Parallel flagging]
@@ -226,12 +227,16 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
   - Metadata file (TSV format)
   - Optional: Bridging sample information
 - **Initial QC**:
+  - **Control Aptamer Removal**: Removes 24 technical control aptamers (8 Incubation controls, 8 Extension controls, 8 Amplification controls) immediately after loading the NPX matrix
+    - **Rationale**: Technical controls are not biological proteins and should be removed early for robustness. This ensures consistent protein counts across batches (5,416 biological proteins) and prevents dimension mismatches in cross-batch normalization.
+    - **Expected Results**: Reduces protein count from 5,440 to 5,416 biological proteins
+    - **Note**: Control aptamers are removed before any QC steps, ensuring all downstream analyses operate on biological proteins only
   - **Missing Rate Filtering**: Removes samples with >10% missing data (`max_missing_per_sample: 0.10`)
-  - **Rationale**: Early removal of samples with excessive missing data prevents downstream QC steps from operating on low-quality samples
-  - **Expected Results**: Typically removes ~0.2% of samples (e.g., 5/2,527 for FG3 Batch 02)
-  - **Tracking**: Initial QC failures are tracked in `00_qc_summary.tsv` with `QC_initial_qc` flag for comprehensive reporting
+    - **Rationale**: Early removal of samples with excessive missing data prevents downstream QC steps from operating on low-quality samples
+    - **Expected Results**: Typically removes ~0.2% of samples (e.g., 5/2,527 for FG3 Batch 02)
+    - **Tracking**: Initial QC failures are tracked in `00_qc_summary.tsv` with `QC_initial_qc` flag for comprehensive reporting
 - **Output**:
-  - `00_npx_matrix_analysis_ready.rds`: Analysis-ready NPX matrix (after initial QC)
+  - `00_npx_matrix_analysis_ready.rds`: Analysis-ready NPX matrix (after control removal and initial QC, 5,416 biological proteins)
   - `00_metadata.rds`: Sample metadata
   - `00_sample_mapping.tsv`: Sample mapping with FINNGENIDs
   - `00_samples_data_raw.rds`: Long-format sample-level data (reconstructed from matrix)
@@ -251,6 +256,11 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
   - **DISEASE_GROUP**: Optional column created from disease indicator columns (if present)
   - If no disease indicator columns exist, DISEASE_GROUP is set to "None" for all samples
   - Pipeline continues successfully even when disease group information is unavailable
+- **Protein Filtering**:
+  - **Constant Protein Removal**: Removes proteins with zero variance (constant measurements across all samples) before PCA analysis
+    - **Rationale**: Constant proteins provide no information for PCA and can cause numerical issues. Proteins with 100% missingness are imputed with 0 but not removed (they become constant after imputation).
+    - **Location**: Performed in `perform_pca()` function before scaling and PCA computation
+    - **Expected Results**: Typically removes 0-5 proteins with zero variance
 - **Methods**:
   - PC1 & PC2 thresholds: mean ± 5 SD after Olink scaling
   - PC3 & PC4 thresholds: mean ± 5 SD
@@ -332,6 +342,16 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
   - **Predictive Modeling**: Elastic Net with nested CV (5-fold outer, 5-fold inner)
   - **Model Performance**: Typically achieves AUC ≈ 0.9999 (near-perfect separation)
   - **Training Samples**: Excludes missing genetic sex, F64 cohort, and chromosomal abnormalities from training
+- **Conditional Platt Scaling** (for sub-optimal separation):
+  - **Purpose**: Improves probability calibration when model predictions are compressed (poor separation despite high AUC)
+  - **Trigger Conditions**: Applied automatically when:
+    - Separation (mean difference between male/female probabilities) < 0.3, OR
+    - Overlap percentage > 50%
+  - **Method**: Fits logistic regression on nested CV predictions to calibrate probabilities: `P = 1 / (1 + exp(-(A × score + B)))`
+  - **Calibration Evaluation**: Uses Expected Calibration Error (ECE) and Brier score to assess improvement
+  - **Decision Logic**: Platt scaling is only applied if it improves both ECE and Brier score compared to original probabilities
+  - **Threshold Calculation**: When calibration is applied, Youden's J threshold is calculated on calibrated probabilities
+  - **Note**: This feature works in both single-batch and multi-batch modes, automatically adapting to batch-specific calibration needs
 - **Two-Tier QC Approach**:
   1. **Strict Mismatches** (predicted_sex ≠ genetic_sex):
      - Definition: Samples where predicted sex label (based on 0.5 probability threshold) differs from genetic sex
@@ -388,9 +408,10 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
 #### 05d_qc_comprehensive_report.R
 - **Purpose**: Generate comprehensive QC reports after all outlier detection steps
 - **Control Probe Handling**:
-  - The pipeline identifies and can remove control probes (Incubation, Extension, and Amplification controls) from outputs
+  - **Note**: Control aptamers (24 technical controls) are **already removed in Step 00** (initial QC) for robustness and to ensure consistent protein counts across batches (5,416 biological proteins).
+  - This step verifies that no control probes remain (should be 0) and creates a biological-only output that matches the main pipeline output for consistency and downstream compatibility.
   - Control probe removal is configurable via `parameters.qc.remove_control_probes` (default: `true`)
-  - When enabled, creates separate "biological-only" outputs without control probes
+  - When enabled, creates separate "biological-only" outputs (for consistency, though control probes are already removed)
 - **Key Features**:
   - Creates binary QC flag columns for each step (QC_initial_qc, QC_pca, QC_sex_mismatch, QC_sex_outlier, QC_technical, QC_zscore, QC_pqtl)
   - Generates integrated outlier tracking table with detection method annotations
@@ -410,10 +431,10 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
 - **Output**:
   - `05d_comprehensive_outliers_list.tsv` / `.parquet`: All flagged samples with QC annotations
   - `05d_qc_annotated_metadata.tsv` / `.parquet`: Metadata with QC flags and metrics
-  - `05d_npx_matrix_all_qc_passed.rds`: Clean matrix with all QC-passed samples (includes all proteins: 5,440 proteins including control probes)
-  - `05d_npx_matrix_all_qc_passed_biological_only.rds` / `.parquet` / `.tsv`: Biological-only matrix (control probes removed, typically 5,416 proteins)
+  - `05d_npx_matrix_all_qc_passed.rds`: Clean matrix with all QC-passed samples (5,416 biological proteins; control aptamers already removed in Step 00)
+  - `05d_npx_matrix_all_qc_passed_biological_only.rds` / `.parquet` / `.tsv`: Biological-only matrix (5,416 biological proteins; matches main output since control probes are already removed in Step 00)
     - **Note**: This output is only created when `parameters.qc.remove_control_probes: true` (default)
-    - Control probes removed: Incubation controls, Extension controls, Amplification controls
+    - Control probes were removed in Step 00: Incubation controls, Extension controls, Amplification controls
     - The exact number of biological proteins may vary depending on the input data panel
 
 ### Phase 3: Normalisation
@@ -641,7 +662,7 @@ Final (pre-normalisation): 2,443 samples (96.68% of 2,527 analysis-ready)
 
 **Format**:
 - **Structure**: R matrix/data.frame format (RDS file)
-- **Dimensions**: ~2,441 samples (rows) × 5,440 proteins (columns)
+- **Dimensions**: ~2,441 samples (rows) × 5,416 proteins (columns; control aptamers removed in Step 00)
 - **Row names**: Sample IDs
 - **Column names**: Protein names (Olink protein identifiers)
 - **Values**: Raw NPX (Normalised Protein eXpression) values on the original Olink scale

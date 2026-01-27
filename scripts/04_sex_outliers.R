@@ -183,6 +183,137 @@ pick_threshold <- function(probs, y_true) {
   best
 }
 
+# Calculate separation metrics for probability distributions
+calc_separation_metrics <- function(predicted_prob, genetic_sex_binary) {
+  # predicted_prob: vector of predicted probabilities (0-1)
+  # genetic_sex_binary: vector of binary labels (0=male, 1=female)
+  dt <- data.table(prob = as.numeric(predicted_prob), sex = as.integer(genetic_sex_binary))
+  dt <- dt[!is.na(prob) & !is.na(sex)]
+
+  if (nrow(dt) == 0) {
+    return(list(separation = 0, overlap_pct = 100, needs_calibration = TRUE,
+                male_mean = NA_real_, female_mean = NA_real_,
+                male_max = NA_real_, female_min = NA_real_))
+  }
+
+  males <- dt[sex == 0]$prob
+  females <- dt[sex == 1]$prob
+
+  if (length(males) == 0 || length(females) == 0) {
+    return(list(separation = 0, overlap_pct = 100, needs_calibration = TRUE,
+                male_mean = if(length(males) > 0) mean(males, na.rm=TRUE) else NA_real_,
+                female_mean = if(length(females) > 0) mean(females, na.rm=TRUE) else NA_real_,
+                male_max = if(length(males) > 0) max(males, na.rm=TRUE) else NA_real_,
+                female_min = if(length(females) > 0) min(females, na.rm=TRUE) else NA_real_))
+  }
+
+  male_mean <- mean(males, na.rm = TRUE)
+  female_mean <- mean(females, na.rm = TRUE)
+  separation <- abs(female_mean - male_mean)
+
+  # Calculate overlap percentage
+  male_max <- max(males, na.rm = TRUE)
+  female_min <- min(females, na.rm = TRUE)
+  overlap_pct <- ifelse(male_max >= female_min,
+    (sum(males >= female_min, na.rm = TRUE) +
+     sum(females <= male_max, na.rm = TRUE)) /
+    (length(males) + length(females)) * 100, 0)
+
+  # Decision criteria: separation < 0.3 OR overlap > 50%
+  needs_calibration <- (separation < 0.3) | (overlap_pct > 50)
+
+  return(list(
+    separation = separation,
+    overlap_pct = overlap_pct,
+    needs_calibration = needs_calibration,
+    male_mean = male_mean,
+    female_mean = female_mean,
+    male_max = male_max,
+    female_min = female_min
+  ))
+}
+
+# Evaluate calibration using Expected Calibration Error (ECE) and Brier score
+evaluate_calibration <- function(prob, labels, bins = 10) {
+  # prob: vector of predicted probabilities (0-1)
+  # labels: vector of binary labels (0 or 1)
+  # bins: number of bins for ECE calculation
+  dt <- data.table(prob = as.numeric(prob), label = as.integer(labels))
+  dt <- dt[!is.na(prob) & !is.na(label)]
+
+  if (nrow(dt) == 0) {
+    return(list(ece = Inf, brier = Inf))
+  }
+
+  # Expected Calibration Error (ECE)
+  bin_edges <- seq(0, 1, length.out = bins + 1)
+  ece <- 0
+  total_samples <- nrow(dt)
+
+  for (i in 1:bins) {
+    in_bin <- (dt$prob >= bin_edges[i] & dt$prob < bin_edges[i+1]) |
+              (i == bins & dt$prob == 1)
+    n_in_bin <- sum(in_bin, na.rm = TRUE)
+
+    if (n_in_bin > 0) {
+      bin_acc <- mean(dt$label[in_bin], na.rm = TRUE)
+      bin_conf <- mean(dt$prob[in_bin], na.rm = TRUE)
+      ece <- ece + abs(bin_acc - bin_conf) * n_in_bin / total_samples
+    }
+  }
+
+  # Brier score
+  brier <- mean((dt$prob - dt$label)^2, na.rm = TRUE)
+
+  return(list(ece = ece, brier = brier))
+}
+
+# Fit Platt scaling model
+fit_platt_scaling <- function(cv_predictions, cv_labels) {
+  # cv_predictions: vector of predictions from nested CV (held-out)
+  # cv_labels: corresponding true labels (0=male, 1=female)
+  dt <- data.table(pred = as.numeric(cv_predictions), label = as.integer(cv_labels))
+  dt <- dt[!is.na(pred) & !is.na(label)]
+
+  if (nrow(dt) < 10) {
+    log_warn("Insufficient data for Platt scaling (n={nrow(dt)} < 10)")
+    return(NULL)
+  }
+
+  # Fit logistic regression: logit(P) = A * score + B
+  tryCatch({
+    platt_fit <- glm(label ~ pred, data = dt, family = binomial(link = "logit"))
+    coefs <- coef(platt_fit)
+    return(list(
+      A = as.numeric(coefs[2]),  # Slope
+      B = as.numeric(coefs[1]),  # Intercept
+      model = platt_fit
+    ))
+  }, error = function(e) {
+    log_warn("Platt scaling fit failed: {e$message}")
+    return(NULL)
+  })
+}
+
+# Apply Platt scaling transformation
+predict_platt_scaling <- function(platt_model, raw_scores) {
+  # platt_model: list with A (slope) and B (intercept) from fit_platt_scaling
+  # raw_scores: vector of raw classifier scores/probabilities
+  if (is.null(platt_model) || is.null(platt_model$A) || is.null(platt_model$B)) {
+    return(raw_scores)  # Return original if model is invalid
+  }
+
+  # Apply Platt transformation: P = 1 / (1 + exp(-(A * score + B)))
+  # But we need to handle logit space: logit(P) = A * score + B
+  # So: P = 1 / (1 + exp(-(A * score + B)))
+  calibrated <- 1 / (1 + exp(-(platt_model$A * raw_scores + platt_model$B)))
+
+  # Clamp to valid range [0, 1]
+  calibrated <- pmax(0, pmin(1, calibrated))
+
+  return(calibrated)
+}
+
 # Function to load covariates with sex information and calculate sample age at collection
 load_covariates <- function(covariate_file, metadata = NULL, finngen_r13_minimum_file = NULL) {
   log_info("Loading sex, age, BMI, and smoking from: {covariate_file}")
@@ -1143,20 +1274,20 @@ create_prediction_distribution_panels <- function(df_pred, title, file_out,
   # - threshold_outlier: (mismatch == TRUE | sex_outlier == TRUE) AND strict_mismatch == FALSE
   #   (PALE RED - threshold-based outliers that are NOT strict mismatches)
   # ============================================================================
-  
+
   # Calculate predicted_sex based on 0.5 threshold
   dt[, predicted_sex := ifelse(predicted_prob >= 0.5, "female", "male")]
-  
+
   # STRICT MISMATCH: predicted_sex != genetic_sex (actual label mismatch)
   dt[, strict_mismatch := (!is.na(genetic_sex) & !is.na(predicted_sex) & genetic_sex != predicted_sex)]
-  
+
   # Threshold-based flags (for reference):
   # mismatch: crosses Youden's J threshold
   dt[, mismatch := (genetic_sex == "male" & predicted_prob >= youden_thresh) |
                     (genetic_sex == "female" & predicted_prob < youden_thresh)]
   # sex_outlier: crosses 0.5 but not Youden's J (for males only, as females with prob < youden are mismatches)
   dt[, sex_outlier := (genetic_sex == "male" & predicted_prob >= 0.5 & predicted_prob < youden_thresh)]
-  
+
   # THRESHOLD OUTLIER: (mismatch == TRUE | sex_outlier == TRUE) AND strict_mismatch == FALSE
   dt[, threshold_outlier := ((mismatch == TRUE | sex_outlier == TRUE) & strict_mismatch == FALSE)]
 
@@ -1689,6 +1820,50 @@ main <- function() {
   metrics_dt <- rbindlist(metrics)
   alpha_pick <- metrics_dt[, .(m_auc = mean(auc, na.rm = TRUE)), by = alpha][order(-m_auc)][1]$alpha
 
+  # ============================================================================
+  # CONDITIONAL PLATT SCALING FOR SUB-OPTIMAL SEPARATION
+  # ============================================================================
+  # Evaluate separation metrics from nested CV predictions
+  log_info("Evaluating separation metrics for conditional Platt scaling")
+  sep_metrics <- calc_separation_metrics(preds_all, y_bin[keep])
+  log_info("Separation metrics: separation={round(sep_metrics$separation, 4)}, overlap={round(sep_metrics$overlap_pct, 2)}%, male_mean={round(sep_metrics$male_mean, 4)}, female_mean={round(sep_metrics$female_mean, 4)}")
+
+  platt_model <- NULL
+  calibration_applied <- FALSE
+  use_calibrated <- FALSE
+
+  if (sep_metrics$needs_calibration) {
+    log_info("Sub-optimal separation detected (separation={round(sep_metrics$separation, 3)}, overlap={round(sep_metrics$overlap_pct, 1)}%). Applying Platt scaling.")
+
+    # Fit Platt scaling using nested CV predictions (held-out, no leakage)
+    platt_model <- fit_platt_scaling(preds_all, y_bin[keep])
+
+    if (!is.null(platt_model)) {
+      # Evaluate calibration before and after Platt scaling
+      cal_before <- evaluate_calibration(preds_all, y_bin[keep])
+      calibrated_cv <- predict_platt_scaling(platt_model, preds_all)
+      cal_after <- evaluate_calibration(calibrated_cv, y_bin[keep])
+
+      log_info("Calibration metrics - Before: ECE={round(cal_before$ece, 4)}, Brier={round(cal_before$brier, 4)}")
+      log_info("Calibration metrics - After: ECE={round(cal_after$ece, 4)}, Brier={round(cal_after$brier, 4)}")
+
+      # Use calibrated probabilities if calibration improved
+      if (cal_after$ece < cal_before$ece && cal_after$brier < cal_before$brier) {
+        use_calibrated <- TRUE
+        calibration_applied <- TRUE
+        log_info("Platt scaling improved calibration: ECE {round(cal_before$ece, 4)} -> {round(cal_after$ece, 4)}, Brier {round(cal_before$brier, 4)} -> {round(cal_after$brier, 4)}. Using calibrated probabilities.")
+      } else {
+        log_warn("Platt scaling did not improve calibration. Using original probabilities.")
+        platt_model <- NULL  # Don't use if it didn't help
+      }
+    } else {
+      log_warn("Platt scaling model fit failed. Using original probabilities.")
+    }
+  } else {
+    log_info("Good separation detected (separation={round(sep_metrics$separation, 3)}, overlap={round(sep_metrics$overlap_pct, 1)}%). Skipping Platt scaling.")
+  }
+  # ============================================================================
+
   # Summarize elastic-net coefficients across outer folds (for proteins only)
   if (length(coef_list) > 0) {
     coefs_mat <- do.call(cbind, lapply(coef_list, function(v) v[prot_names]))
@@ -1726,7 +1901,22 @@ main <- function() {
                        weights = w_all, penalty.factor = pen_all, standardize = FALSE,
                        type.measure = "auc", nfolds = 5)
   pr_all <- as.numeric(predict(fit_all, newx = X_all, s = "lambda.1se", type = "response"))
-  th_global <- pick_threshold(preds_all, y_bin[keep])$th
+
+  # Calculate Youden's J threshold using calibrated CV predictions if available
+  if (use_calibrated && !is.null(platt_model)) {
+    calibrated_cv <- predict_platt_scaling(platt_model, preds_all)
+    th_global <- pick_threshold(calibrated_cv, y_bin[keep])$th
+    log_info("Using Youden's J threshold from calibrated probabilities: {round(th_global, 3)}")
+  } else {
+    th_global <- pick_threshold(preds_all, y_bin[keep])$th
+    log_info("Using Youden's J threshold from original probabilities: {round(th_global, 3)}")
+  }
+
+  # Apply Platt scaling to training predictions if calibration was applied
+  if (use_calibrated && !is.null(platt_model)) {
+    pr_all <- predict_platt_scaling(platt_model, pr_all)
+    log_info("Applied Platt scaling to training predictions")
+  }
   pred_label <- ifelse(pr_all >= th_global, 1, 0)
   predicted_sex_str <- ifelse(pred_label == 1, "female", "male")
   genetic_sex_str_all <- ifelse(y_raw[keep] == 2, "female",
@@ -1761,6 +1951,13 @@ main <- function() {
   conf_full_sc <- sweep(sweep(conf_full, 2, conf_mu_all, "-"), 2, conf_sd_all, "/")
   X_full_pred <- cbind(Z_full, conf_full_sc)
   pr_full_all <- as.numeric(predict(fit_all, newx = X_full_pred, s = "lambda.1se", type = "response"))
+
+  # Apply Platt scaling to all-sample predictions if calibration was applied
+  if (use_calibrated && !is.null(platt_model)) {
+    pr_full_all <- predict_platt_scaling(platt_model, pr_full_all)
+    log_info("Applied Platt scaling to all-sample predictions")
+  }
+
   y_raw_full <- pheno_dt$genetic_sex
   genetic_sex_str_full <- ifelse(y_raw_full == 2, "female", ifelse(y_raw_full == 1, "male", NA_character_))
 
@@ -1796,6 +1993,19 @@ main <- function() {
                                      genetic_sex != predicted_sex)]
   if (any(duplicated(preds_dt_all$SAMPLE_ID))) preds_dt_all <- preds_dt_all[!duplicated(SAMPLE_ID)]
   log_info("Predictions generated for all samples: {nrow(preds_dt_all)}")
+  if (calibration_applied) {
+    log_info("=== CALIBRATION STATUS ===")
+    log_info("Platt scaling was applied and improved calibration")
+    log_info("Using calibrated probabilities for threshold calculation and predictions")
+  } else if (sep_metrics$needs_calibration && is.null(platt_model)) {
+    log_info("=== CALIBRATION STATUS ===")
+    log_info("Sub-optimal separation detected but Platt scaling fit failed or did not improve calibration")
+    log_info("Using original probabilities")
+  } else {
+    log_info("=== CALIBRATION STATUS ===")
+    log_info("Good separation detected - Platt scaling not needed")
+    log_info("Using original probabilities")
+  }
   log_info("Strict mismatches (predicted_sex != genetic_sex): {sum(preds_dt_all$strict_mismatch, na.rm=TRUE)}")
   log_info("Threshold-based mismatches (Youden J = {round(th_global, 3)}): {sum(preds_dt_all$mismatch, na.rm=TRUE)}")
   log_info("Sex outliers (0.5 threshold, mild): {sum(preds_dt_all$sex_outlier, na.rm=TRUE)}")
@@ -1933,7 +2143,9 @@ main <- function() {
         Noutlier = sum(sex_outlier, na.rm = TRUE),
         N = .N
       ), by = PlateID][order(-sexOutRate)]
-      fwrite(plate_summary, , sep = "\t")
+      sex_outlier_plate_path <- get_output_path(step_num, "sex_outlier_plate_summary", batch_id, "outliers", "tsv", config = config)
+      ensure_output_dir(sex_outlier_plate_path)
+      fwrite(plate_summary, sex_outlier_plate_path, sep = "\t")
     } else {
       log_warn("Failed to read samples_data_raw.rds; skipping sex outlier by plate summary")
     }

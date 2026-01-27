@@ -995,6 +995,10 @@ main <- function() {
     log_info("  Removal rate: {pct_removed}%")
 
     # 4.4: Output 3b - Biological-only NPX Matrix (control probes removed)
+    # NOTE: Control probes (24 control aptamers) are now removed in step 00 (initial QC)
+    # for robustness and to ensure consistent protein counts across batches (5416 biological proteins).
+    # This step checks if any control probes remain (should be 0) and creates a biological-only output
+    # that matches the main pipeline output (for consistency and downstream compatibility).
     # Check if control probe removal is enabled (default: true)
     remove_control_probes <- tryCatch(
         isTRUE(config$parameters$qc$remove_control_probes),
@@ -1009,13 +1013,16 @@ main <- function() {
     if (remove_control_probes) {
         log_info("")
         log_info("Generating Output 3b: Biological-only NPX Matrix (control probes removed)...")
+        log_info("  Note: Control probes are already removed in step 00 (initial QC) for robustness")
+        log_info("  This output matches the main pipeline output (all matrices have 5416 biological proteins)")
 
-        # Identify control probes
+        # Identify control probes (should be 0 since they're removed in step 00)
         protein_names <- colnames(clean_npx_matrix)
         control_probes <- identify_control_probes(protein_names)
 
         if (length(control_probes) > 0) {
-            log_info("  Control probes identified: {length(control_probes)}")
+            log_warn("  WARNING: {length(control_probes)} control probes found in matrix (should be 0)")
+            log_warn("  Control probes should have been removed in step 00 - removing them now")
             incubation <- sum(grepl("Incubation control", control_probes, ignore.case = TRUE))
             extension <- sum(grepl("Extension control", control_probes, ignore.case = TRUE))
             amplification <- sum(grepl("Amplification control", control_probes, ignore.case = TRUE))
@@ -1029,7 +1036,8 @@ main <- function() {
             log_info("  Biological proteins: {length(biological_proteins)}")
             log_info("  Control probes removed: {length(control_probes)}")
         } else {
-            log_warn("  No control probes found in matrix - all proteins will be retained")
+            log_info("  ✓ No control probes found (already removed in step 00)")
+            log_info("  Biological proteins: {length(protein_names)}")
             biological_npx_matrix <- clean_npx_matrix
         }
 
