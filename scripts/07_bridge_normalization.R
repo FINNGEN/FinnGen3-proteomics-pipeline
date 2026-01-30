@@ -19,6 +19,8 @@ suppressPackageStartupMessages({
   library(OlinkAnalyze)
   library(ggplot2)
   library(ggpubr)
+  library(RColorBrewer)  # For ColorBrewer palettes
+  library(cluster)       # For silhouette score calculation
   library(yaml)
   library(logger)
   library(sva)  # For ComBat normalization
@@ -101,9 +103,72 @@ validate_bridge_samples <- function(npx_matrix, bridge_samples) {
   ))
 }
 
+# Function to calculate Olink-standard adjustment factors using pairwise differences
+# This implements the Olink standard: median of pairwise differences per protein
+calculate_olink_adj_factor <- function(batch1_bridge_matrix, batch2_bridge_matrix, bridge_mapping) {
+  # bridge_mapping: data.table with SampleID_batch1, SampleID_batch2, FINNGENID columns
+  # NOTE: The bridge matrices are assumed to be already ordered to match bridge_mapping
+  # Returns: named vector of adjustment factors (one per protein)
+
+  log_info("Calculating Olink-standard adjustment factors using pairwise differences")
+
+  # Get common proteins
+  common_proteins <- intersect(colnames(batch1_bridge_matrix), colnames(batch2_bridge_matrix))
+
+  if(length(common_proteins) == 0) {
+    log_error("No common proteins between bridge matrices")
+    return(NULL)
+  }
+
+  # Verify matrices have same number of rows (paired samples)
+  if(nrow(batch1_bridge_matrix) != nrow(batch2_bridge_matrix)) {
+    log_error("Bridge matrices have different number of rows: {nrow(batch1_bridge_matrix)} vs {nrow(batch2_bridge_matrix)}")
+    return(NULL)
+  }
+
+  if(nrow(batch1_bridge_matrix) != nrow(bridge_mapping)) {
+    log_error("Bridge matrices row count ({nrow(batch1_bridge_matrix)}) doesn't match bridge_mapping ({nrow(bridge_mapping)})")
+    return(NULL)
+  }
+
+  # Calculate adjustment factor for each protein
+  # Since matrices are already ordered to match bridge_mapping, use row indices
+  adj_factors <- sapply(common_proteins, function(protein) {
+    # Get paired values for each bridge sample pair (using row indices since matrices are ordered)
+    npx_batch1 <- batch1_bridge_matrix[, protein]
+    npx_batch2 <- batch2_bridge_matrix[, protein]
+
+    # Calculate pairwise differences: ref - target
+    # Note: We'll determine which is ref/target later based on reference_batch parameter
+    pairwise_diff <- npx_batch1 - npx_batch2
+
+    # Adjustment factor is median of pairwise differences
+    adj_factor <- median(pairwise_diff, na.rm = TRUE)
+
+    # If all NA, return 0 (no adjustment)
+    if(is.na(adj_factor)) {
+      adj_factor <- 0
+    }
+
+    return(adj_factor)
+  })
+
+  # Handle any remaining NAs
+  adj_factors[is.na(adj_factors)] <- 0
+
+  log_info("Adjustment factor statistics:")
+  log_info("  Range: [{round(min(adj_factors), 4)}, {round(max(adj_factors), 4)}]")
+  log_info("  Mean: {round(mean(adj_factors), 4)}, Median: {round(median(adj_factors), 4)}")
+  log_info("  Zero adjustments (no change needed): {sum(adj_factors == 0)}")
+
+  return(adj_factors)
+}
+
 # Function for cross-batch bridge normalisation (loads bridge samples from both batches)
+# Now supports both Olink standard (pairwise differences, reference batch unchanged) and combined reference method
 cross_batch_bridge_normalization <- function(batch1_matrix, batch2_matrix, batch1_bridge_finngenids, batch2_bridge_finngenids,
-                                             batch1_sample_mapping, batch2_sample_mapping, method = "median") {
+                                             batch1_sample_mapping, batch2_sample_mapping,
+                                             method = "olink_standard", reference_batch = "batch_02") {
   log_info("╔══════════════════════════════════════════════════════════════════╗")
   log_info("║ CROSS-BATCH BRIDGE NORMALIZATION                                 ║")
   log_info("╚══════════════════════════════════════════════════════════════════╝")
@@ -162,7 +227,135 @@ cross_batch_bridge_normalization <- function(batch1_matrix, batch2_matrix, batch
   batch1_bridge_data <- batch1_matrix[batch1_bridge_in_matrix, common_proteins, drop = FALSE]
   batch2_bridge_data <- batch2_matrix[batch2_bridge_in_matrix, common_proteins, drop = FALSE]
 
-  if(method == "median") {
+  # Create bridge mapping for pairwise differences (matched by FINNGENID)
+  bridge_mapping <- merge(
+    batch1_sample_mapping[SampleID %in% batch1_bridge_in_matrix, .(SampleID_batch1 = SampleID, FINNGENID)],
+    batch2_sample_mapping[SampleID %in% batch2_bridge_in_matrix, .(SampleID_batch2 = SampleID, FINNGENID)],
+    by = "FINNGENID"
+  )
+
+  if(nrow(bridge_mapping) == 0) {
+    log_error("No matching bridge samples found after merging by FINNGENID")
+    return(NULL)
+  }
+
+  log_info("Bridge sample pairs matched: {nrow(bridge_mapping)} pairs")
+
+  # Ensure bridge samples are in the same order in both matrices (ordered by FINNGENID)
+  bridge_mapping <- bridge_mapping[order(FINNGENID)]
+  batch1_bridge_data <- batch1_matrix[bridge_mapping$SampleID_batch1, common_proteins, drop = FALSE]
+  batch2_bridge_data <- batch2_matrix[bridge_mapping$SampleID_batch2, common_proteins, drop = FALSE]
+
+  # Verify row order matches
+  if(!identical(rownames(batch1_bridge_data), bridge_mapping$SampleID_batch1) ||
+     !identical(rownames(batch2_bridge_data), bridge_mapping$SampleID_batch2)) {
+    log_warn("Bridge sample order mismatch - reordering matrices")
+    batch1_bridge_data <- batch1_bridge_data[bridge_mapping$SampleID_batch1, common_proteins, drop = FALSE]
+    batch2_bridge_data <- batch2_bridge_data[bridge_mapping$SampleID_batch2, common_proteins, drop = FALSE]
+  }
+
+  if(method == "olink_standard") {
+    log_info("")
+    log_info("=== OLINK STANDARD BRIDGE NORMALIZATION ===")
+    log_info("Using pairwise differences: reference batch unchanged, target batch adjusted")
+    log_info("Reference batch: {reference_batch}")
+
+    # Determine which batch is reference and which is target
+    # Note: batch1_matrix is the first batch passed to function, batch2_matrix is the second
+    # We assume batch1_matrix corresponds to "batch_01" and batch2_matrix to "batch_02"
+    # based on the function call convention in main()
+    if(reference_batch == "batch_01") {
+      ref_batch_id <- 1
+      target_batch_id <- 2
+      ref_matrix <- batch1_matrix
+      target_matrix <- batch2_matrix
+      ref_bridge_data <- batch1_bridge_data
+      target_bridge_data <- batch2_bridge_data
+      ref_bridge_samples <- batch1_bridge_in_matrix
+      target_bridge_samples <- batch2_bridge_in_matrix
+      ref_sample_mapping <- batch1_sample_mapping
+      target_sample_mapping <- batch2_sample_mapping
+    } else {
+      # Default: batch_02 is reference
+      ref_batch_id <- 2
+      target_batch_id <- 1
+      ref_matrix <- batch2_matrix
+      target_matrix <- batch1_matrix
+      ref_bridge_data <- batch2_bridge_data
+      target_bridge_data <- batch1_bridge_data
+      ref_bridge_samples <- batch2_bridge_in_matrix
+      target_bridge_samples <- batch1_bridge_in_matrix
+      ref_sample_mapping <- batch2_sample_mapping
+      target_sample_mapping <- batch1_sample_mapping
+    }
+
+    log_info("Reference batch: Batch {ref_batch_id} (unchanged)")
+    log_info("Target batch: Batch {target_batch_id} (will be adjusted)")
+
+    # Calculate adjustment factors using pairwise differences
+    # Adjustment factor = median(NPX_ref[sample_i] - NPX_target[sample_i]) for each protein
+    adj_factors <- calculate_olink_adj_factor(ref_bridge_data, target_bridge_data, bridge_mapping)
+
+    if(is.null(adj_factors)) {
+      log_error("Failed to calculate adjustment factors")
+      return(NULL)
+    }
+
+    # Apply adjustment: target_batch = target_batch + adj_factor (additive on log scale)
+    log_info("")
+    log_info("=== APPLYING OLINK STANDARD NORMALIZATION ===")
+    log_info("Formula: NPX_target_adjusted = NPX_target + Adj_factor")
+    log_info("Adjusting {length(common_proteins)} common proteins in target batch only...")
+
+    target_normalized_common <- sweep(target_matrix[, common_proteins, drop = FALSE], 2, adj_factors, "+")
+
+    # Reconstruct matrices
+    ref_normalized <- ref_matrix  # Reference batch unchanged
+    target_normalized <- target_matrix
+    target_normalized[, common_proteins] <- target_normalized_common
+
+    # Map back to batch1/batch2 naming for return
+    if(ref_batch_id == 1) {
+      batch1_normalized <- ref_normalized
+      batch2_normalized <- target_normalized
+      batch1_offsets <- rep(0, length(common_proteins))  # Reference has no offset
+      batch2_offsets <- adj_factors
+      names(batch1_offsets) <- common_proteins
+      names(batch2_offsets) <- common_proteins
+    } else {
+      batch1_normalized <- target_normalized
+      batch2_normalized <- ref_normalized
+      batch1_offsets <- adj_factors
+      batch2_offsets <- rep(0, length(common_proteins))  # Reference has no offset
+      names(batch1_offsets) <- common_proteins
+      names(batch2_offsets) <- common_proteins
+    }
+
+    log_info("Reference batch: unchanged ({nrow(ref_normalized)} × {ncol(ref_normalized)})")
+    log_info("Target batch: adjusted ({nrow(target_normalized)} × {ncol(target_normalized)})")
+    log_info("════════════════════════════════════════════════════════════════════")
+
+    return(list(
+      batch1_normalized = batch1_normalized,
+      batch2_normalized = batch2_normalized,
+      batch1_normalized_raw = batch1_normalized,  # Same (no transform)
+      batch2_normalized_raw = batch2_normalized,  # Same (no transform)
+      batch1_offsets = batch1_offsets,
+      batch2_offsets = batch2_offsets,
+      batch1_bridge_samples_used = if(ref_batch_id == 1) ref_bridge_samples else target_bridge_samples,
+      batch2_bridge_samples_used = if(ref_batch_id == 1) target_bridge_samples else ref_bridge_samples,
+      common_proteins = common_proteins,
+      method = "olink_standard",
+      reference_batch = if(ref_batch_id == 1) "batch_01" else "batch_02",
+      adj_factors = adj_factors  # Store for bridgeability plots
+    ))
+
+  } else if(method == "combined_reference" || method == "median") {
+    # Keep the old combined reference method as an alternative (backward compatibility)
+    log_info("")
+    log_info("=== COMBINED REFERENCE BRIDGE NORMALIZATION ===")
+    log_info("Using batch-level medians: both batches adjusted toward combined reference")
+    log_info("NOTE: This method is deprecated. Use 'olink_standard' for Olink-compliant normalization.")
     log_info("")
     log_info("=== CALCULATING BATCH OFFSETS (ADDITIVE ADJUSTMENT) ===")
     log_info("NOTE: NPX values are already log2-transformed. Using ADDITIVE adjustment (not multiplicative)")
@@ -985,12 +1178,18 @@ perform_pca_analysis <- function(batch1_matrix, batch2_matrix, common_proteins, 
   # Calculate variance explained
   var_explained <- summary(pca_result)$importance[2, 1:min(4, ncol(pca_result$x))]
 
-  # Prepare plot data
+  # Prepare plot data with bridge sample batch information
+  # Create a combined identifier for bridge samples: "Bridge_Batch1", "Bridge_Batch2", or "Regular"
+  sample_type <- rep("Regular", length(batch_vector))
+  sample_type[is_bridge & batch_vector == batch_labels[1]] <- "Bridge_Batch1"
+  sample_type[is_bridge & batch_vector == batch_labels[2]] <- "Bridge_Batch2"
+
   plot_data <- data.table(
     PC1 = pca_scores[, 1],
     PC2 = pca_scores[, 2],
     Batch = batch_vector,
-    IsBridge = is_bridge
+    IsBridge = is_bridge,
+    SampleType = sample_type  # New column for coloring bridge samples by batch
   )
 
   if(ncol(pca_scores) >= 4) {
@@ -1015,43 +1214,123 @@ create_pca_plots <- function(batch1_matrix, batch2_matrix, common_proteins, batc
   plot_data <- pca_result$plot_data
   var_explained <- pca_result$var_explained
 
-  # Colourblind-friendly palette matching sex comparison plots
-  batch_colors <- c("batch_01" = "#E64B35", "batch_02" = "#4DBBD5")  # Match 08_covariate_sex_comparison colors
+  # Create 4-category variable for better visualization
+  # Categories: Batch1, Batch2, Bridge_B1, Bridge_B2
+  plot_data[, Category := fcase(
+    SampleType == "Bridge_Batch1", "Bridge_B1",
+    SampleType == "Bridge_Batch2", "Bridge_B2",
+    Batch == "batch_01", "Batch1",
+    Batch == "batch_02", "Batch2",
+    default = "Unknown"
+  )]
+  plot_data[, Category := factor(Category, levels = c("Batch1", "Batch2", "Bridge_B1", "Bridge_B2"))]
 
-  # Create PC1 vs PC2 plot with increased alpha and bridge samples as black circles
-  p1 <- ggplot(plot_data, aes(x = PC1, y = PC2, color = Batch)) +
-    # Regular samples (colored by batch)
-    geom_point(data = plot_data[IsBridge == FALSE], alpha = 0.7, size = 1.5, shape = 16) +
-    # Bridge samples (black circles, on top)
-    geom_point(data = plot_data[IsBridge == TRUE], color = "black", alpha = 0.8, size = 2.5, shape = 21, fill = "black", stroke = 0.5) +
-    scale_color_manual(values = batch_colors,
-                       labels = c("batch_01" = "Batch 1", "batch_02" = "Batch 2")) +
+  # Use ColorBrewer RdBu palette (4 colors) - diverging palette
+  # Order: Blue (Batch1), Light Blue (Bridge_B1), Light Red (Bridge_B2), Red (Batch2)
+  rdbu_colors <- brewer.pal(11, "RdBu")
+  # Select 4 distinct colors from the palette
+  category_colors <- c(
+    "Batch1" = rdbu_colors[9],     # Blue for Batch 1
+    "Bridge_B1" = rdbu_colors[7],  # Light blue for Bridge from Batch 1
+    "Bridge_B2" = rdbu_colors[5],  # Light red for Bridge from Batch 2
+    "Batch2" = rdbu_colors[3]      # Red for Batch 2
+  )
+
+  # Calculate silhouette scores for clustering quality assessment
+  # Silhouette score measures how well samples cluster within their assigned group
+  silhouette_score <- tryCatch({
+    # Use PC1 and PC2 for clustering assessment
+    pca_coords <- as.matrix(plot_data[, .(PC1, PC2)])
+    # Create cluster assignments based on SampleType
+    cluster_ids <- as.integer(plot_data$Category)
+
+    # Calculate silhouette (requires at least 2 clusters)
+    if(length(unique(cluster_ids)) >= 2 && nrow(pca_coords) >= 2) {
+      sil <- silhouette(cluster_ids, dist(pca_coords))
+      mean(sil[, 3])  # Average silhouette width
+    } else {
+      NA_real_
+    }
+  }, error = function(e) {
+    log_warn("Could not calculate silhouette score: {e$message}")
+    NA_real_
+  })
+
+  # Format silhouette score for display
+  sil_text <- if(!is.na(silhouette_score)) {
+    paste0("Silhouette score: ", round(silhouette_score, 3))
+  } else {
+    ""
+  }
+
+  # Create PC1 vs PC2 plot with 4 categories, dimmed background, and prominent bridge samples
+  p1 <- ggplot(plot_data, aes(x = PC1, y = PC2)) +
+    # Non-bridge samples (dimmed background)
+    geom_point(data = plot_data[Category %in% c("Batch1", "Batch2")],
+               aes(color = Category), alpha = 0.3, size = 1.5, shape = 16) +
+    # Bridge samples (prominent, larger, filled squares shape 22)
+    geom_point(data = plot_data[Category %in% c("Bridge_B1", "Bridge_B2")],
+               aes(fill = Category), color = "black", alpha = 0.9, size = 3.5, shape = 22, stroke = 0.6) +
+    scale_color_manual(values = category_colors,
+                       labels = c("Batch1" = "Batch 1", "Batch2" = "Batch 2"),
+                       name = "Sample Type") +
+    scale_fill_manual(values = category_colors,
+                      labels = c("Bridge_B1" = "Bridge B1", "Bridge_B2" = "Bridge B2"),
+                      name = "Sample Type") +
     labs(title = paste0("PCA: PC1 vs PC2 (", stage, " normalisation)"),
-         subtitle = paste0("Variance explained: PC1=", round(var_explained[1]*100, 1), "%, PC2=", round(var_explained[2]*100, 1), "%"),
+         subtitle = paste0("Variance: PC1=", round(var_explained[1]*100, 1), "%, PC2=", round(var_explained[2]*100, 1), "%. ", sil_text),
          x = paste0("PC1 (", round(var_explained[1]*100, 1), "%)"),
-         y = paste0("PC2 (", round(var_explained[2]*100, 1), "%)"),
-         color = "Batch") +
+         y = paste0("PC2 (", round(var_explained[2]*100, 1), "%)")) +
+    guides(color = guide_legend(override.aes = list(alpha = 0.8, size = 3)),
+           fill = guide_legend(override.aes = list(alpha = 0.9, size = 3))) +
     theme_bw(base_size = 11) +
     theme(legend.position = "right",
+          legend.title = element_text(face = "bold", size = 10),
           panel.grid.minor = element_blank())
 
   # Create PC3 vs PC4 plot if available
   p2 <- NULL
   if("PC3" %in% names(plot_data) && "PC4" %in% names(plot_data)) {
-    p2 <- ggplot(plot_data, aes(x = PC3, y = PC4, color = Batch)) +
-      # Regular samples (colored by batch)
-      geom_point(data = plot_data[IsBridge == FALSE], alpha = 0.7, size = 1.5, shape = 16) +
-      # Bridge samples (black circles, on top)
-      geom_point(data = plot_data[IsBridge == TRUE], color = "black", alpha = 0.8, size = 2.5, shape = 21, fill = "black", stroke = 0.5) +
-      scale_color_manual(values = batch_colors,
-                         labels = c("batch_01" = "Batch 1", "batch_02" = "Batch 2")) +
+    # Calculate silhouette score for PC3 vs PC4
+    silhouette_score_pc34 <- tryCatch({
+      pca_coords_pc34 <- as.matrix(plot_data[, .(PC3, PC4)])
+      cluster_ids <- as.integer(plot_data$Category)
+      if(length(unique(cluster_ids)) >= 2 && nrow(pca_coords_pc34) >= 2) {
+        sil <- silhouette(cluster_ids, dist(pca_coords_pc34))
+        mean(sil[, 3])
+      } else {
+        NA_real_
+      }
+    }, error = function(e) NA_real_)
+
+    sil_text_pc34 <- if(!is.na(silhouette_score_pc34)) {
+      paste0("Silhouette score: ", round(silhouette_score_pc34, 3))
+    } else {
+      ""
+    }
+
+    p2 <- ggplot(plot_data, aes(x = PC3, y = PC4)) +
+      # Non-bridge samples (dimmed background)
+      geom_point(data = plot_data[Category %in% c("Batch1", "Batch2")],
+                 aes(color = Category), alpha = 0.3, size = 1.5, shape = 16) +
+      # Bridge samples (prominent, larger, filled squares shape 22)
+      geom_point(data = plot_data[Category %in% c("Bridge_B1", "Bridge_B2")],
+                 aes(fill = Category), color = "black", alpha = 0.9, size = 3.5, shape = 22, stroke = 0.6) +
+      scale_color_manual(values = category_colors,
+                         labels = c("Batch1" = "Batch 1", "Batch2" = "Batch 2"),
+                         name = "Sample Type") +
+      scale_fill_manual(values = category_colors,
+                        labels = c("Bridge_B1" = "Bridge B1", "Bridge_B2" = "Bridge B2"),
+                        name = "Sample Type") +
       labs(title = paste0("PCA: PC3 vs PC4 (", stage, " normalisation)"),
-           subtitle = paste0("Variance explained: PC3=", round(var_explained[3]*100, 1), "%, PC4=", round(var_explained[4]*100, 1), "%"),
+           subtitle = paste0("Variance: PC3=", round(var_explained[3]*100, 1), "%, PC4=", round(var_explained[4]*100, 1), "%. ", sil_text_pc34),
            x = paste0("PC3 (", round(var_explained[3]*100, 1), "%)"),
-           y = paste0("PC4 (", round(var_explained[4]*100, 1), "%)"),
-           color = "Batch") +
+           y = paste0("PC4 (", round(var_explained[4]*100, 1), "%)")) +
+      guides(color = guide_legend(override.aes = list(alpha = 0.8, size = 3)),
+             fill = guide_legend(override.aes = list(alpha = 0.9, size = 3))) +
       theme_bw(base_size = 11) +
       theme(legend.position = "right",
+            legend.title = element_text(face = "bold", size = 10),
             panel.grid.minor = element_blank())
   }
 
@@ -1067,7 +1346,8 @@ create_pca_plots <- function(batch1_matrix, batch2_matrix, common_proteins, batc
     pc3_pc4 = p2,
     combined = combined_plot,
     plot_data = plot_data,
-    var_explained = var_explained
+    var_explained = var_explained,
+    silhouette_score = silhouette_score
   ))
 }
 
@@ -1075,41 +1355,94 @@ create_pca_plots <- function(batch1_matrix, batch2_matrix, common_proteins, batc
 create_pca_comparison_plots <- function(pca_before, pca_after, method_name = "Bridge") {
   log_info("Creating side-by-side PCA comparison plots for {method_name} method")
 
-  # Colourblind-friendly palette matching 08_covariate_sex_comparison
-  batch_colors <- c("batch_01" = "#E64B35", "batch_02" = "#4DBBD5")
+  # Use ColorBrewer RdBu palette (4 colors) for consistency
+  rdbu_colors <- brewer.pal(11, "RdBu")
+  category_colors <- c(
+    "Batch1" = rdbu_colors[9],     # Blue for Batch 1
+    "Bridge_B1" = rdbu_colors[7],  # Light blue for Bridge from Batch 1
+    "Bridge_B2" = rdbu_colors[5],  # Light red for Bridge from Batch 2
+    "Batch2" = rdbu_colors[3]      # Red for Batch 2
+  )
+
+  # Ensure plot_data has Category column (should be created in create_pca_plots)
+  # If not present, create it here for safety
+  for(pca_data in list(pca_before$plot_data, pca_after$plot_data)) {
+    if(!"Category" %in% names(pca_data)) {
+      pca_data[, Category := fcase(
+        SampleType == "Bridge_Batch1", "Bridge_B1",
+        SampleType == "Bridge_Batch2", "Bridge_B2",
+        Batch == "batch_01", "Batch1",
+        Batch == "batch_02", "Batch2",
+        default = "Unknown"
+      )]
+      pca_data[, Category := factor(Category, levels = c("Batch1", "Batch2", "Bridge_B1", "Bridge_B2"))]
+    }
+  }
 
   # ===========================================================================
   # PC1 vs PC2: Before and After side-by-side
   # ===========================================================================
-  p_pc12_before <- ggplot(pca_before$plot_data, aes(x = PC1, y = PC2, color = Batch)) +
-    # Regular samples (colored by batch)
-    geom_point(data = pca_before$plot_data[IsBridge == FALSE], alpha = 0.7, size = 1.5, shape = 16) +
-    # Bridge samples (black circles, on top)
-    geom_point(data = pca_before$plot_data[IsBridge == TRUE], color = "black", alpha = 0.8, size = 2.5, shape = 21, fill = "black", stroke = 0.5) +
-    scale_color_manual(values = batch_colors,
-                       labels = c("batch_01" = "Batch 1", "batch_02" = "Batch 2")) +
-    labs(title = "PCA: PC1 vs PC2 (before normalisation)",
-         subtitle = paste0("Variance explained: PC1=", round(pca_before$var_explained[1]*100, 1), "%, PC2=", round(pca_before$var_explained[2]*100, 1), "%"),
-         x = paste0("PC1 (", round(pca_before$var_explained[1]*100, 1), "%)"),
-         y = paste0("PC2 (", round(pca_before$var_explained[2]*100, 1), "%)"),
-         color = "Batch") +
-    theme_bw(base_size = 11) +
-    theme(legend.position = "right", panel.grid.minor = element_blank())
+  # Silhouette score for before
+  sil_before <- if(!is.null(pca_before$silhouette_score) && !is.na(pca_before$silhouette_score)) {
+    paste0("Silhouette: ", round(pca_before$silhouette_score, 3))
+  } else {
+    ""
+  }
 
-  p_pc12_after <- ggplot(pca_after$plot_data, aes(x = PC1, y = PC2, color = Batch)) +
-    # Regular samples (colored by batch)
-    geom_point(data = pca_after$plot_data[IsBridge == FALSE], alpha = 0.7, size = 1.5, shape = 16) +
-    # Bridge samples (black circles, on top)
-    geom_point(data = pca_after$plot_data[IsBridge == TRUE], color = "black", alpha = 0.8, size = 2.5, shape = 21, fill = "black", stroke = 0.5) +
-    scale_color_manual(values = batch_colors,
-                       labels = c("batch_01" = "Batch 1", "batch_02" = "Batch 2")) +
-    labs(title = paste0("PCA: PC1 vs PC2 (after ", method_name, " normalisation)"),
-         subtitle = paste0("Variance explained: PC1=", round(pca_after$var_explained[1]*100, 1), "%, PC2=", round(pca_after$var_explained[2]*100, 1), "%"),
-         x = paste0("PC1 (", round(pca_after$var_explained[1]*100, 1), "%)"),
-         y = paste0("PC2 (", round(pca_after$var_explained[2]*100, 1), "%)"),
-         color = "Batch") +
+  # Silhouette score for after
+  sil_after <- if(!is.null(pca_after$silhouette_score) && !is.na(pca_after$silhouette_score)) {
+    paste0("Silhouette: ", round(pca_after$silhouette_score, 3))
+  } else {
+    ""
+  }
+
+  p_pc12_before <- ggplot(pca_before$plot_data, aes(x = PC1, y = PC2)) +
+    # Non-bridge samples (dimmed background)
+    geom_point(data = pca_before$plot_data[Category %in% c("Batch1", "Batch2")],
+               aes(color = Category), alpha = 0.3, size = 1.5, shape = 16) +
+    # Bridge samples (prominent, larger, filled squares shape 22)
+    geom_point(data = pca_before$plot_data[Category %in% c("Bridge_B1", "Bridge_B2")],
+               aes(fill = Category), color = "black", alpha = 0.9, size = 3.5, shape = 22, stroke = 0.6) +
+    scale_color_manual(values = category_colors,
+                       labels = c("Batch1" = "Batch 1", "Batch2" = "Batch 2"),
+                       name = "Sample Type") +
+    scale_fill_manual(values = category_colors,
+                      labels = c("Bridge_B1" = "Bridge B1", "Bridge_B2" = "Bridge B2"),
+                      name = "Sample Type") +
+    labs(title = "Before Normalisation",
+         subtitle = paste0("PC1=", round(pca_before$var_explained[1]*100, 1), "%, PC2=", round(pca_before$var_explained[2]*100, 1), "%. ", sil_before),
+         x = paste0("PC1 (", round(pca_before$var_explained[1]*100, 1), "%)"),
+         y = paste0("PC2 (", round(pca_before$var_explained[2]*100, 1), "%)")) +
+    guides(color = guide_legend(override.aes = list(alpha = 0.8, size = 3)),
+           fill = guide_legend(override.aes = list(alpha = 0.9, size = 3))) +
     theme_bw(base_size = 11) +
-    theme(legend.position = "right", panel.grid.minor = element_blank())
+    theme(legend.position = "right",
+          legend.title = element_text(face = "bold", size = 10),
+          panel.grid.minor = element_blank())
+
+  p_pc12_after <- ggplot(pca_after$plot_data, aes(x = PC1, y = PC2)) +
+    # Non-bridge samples (dimmed background)
+    geom_point(data = pca_after$plot_data[Category %in% c("Batch1", "Batch2")],
+               aes(color = Category), alpha = 0.3, size = 1.5, shape = 16) +
+    # Bridge samples (prominent, larger, filled squares shape 22)
+    geom_point(data = pca_after$plot_data[Category %in% c("Bridge_B1", "Bridge_B2")],
+               aes(fill = Category), color = "black", alpha = 0.9, size = 3.5, shape = 22, stroke = 0.6) +
+    scale_color_manual(values = category_colors,
+                       labels = c("Batch1" = "Batch 1", "Batch2" = "Batch 2"),
+                       name = "Sample Type") +
+    scale_fill_manual(values = category_colors,
+                      labels = c("Bridge_B1" = "Bridge B1", "Bridge_B2" = "Bridge B2"),
+                      name = "Sample Type") +
+    labs(title = paste0("After ", method_name, " Normalisation"),
+         subtitle = paste0("PC1=", round(pca_after$var_explained[1]*100, 1), "%, PC2=", round(pca_after$var_explained[2]*100, 1), "%. ", sil_after),
+         x = paste0("PC1 (", round(pca_after$var_explained[1]*100, 1), "%)"),
+         y = paste0("PC2 (", round(pca_after$var_explained[2]*100, 1), "%)")) +
+    guides(color = guide_legend(override.aes = list(alpha = 0.8, size = 3)),
+           fill = guide_legend(override.aes = list(alpha = 0.9, size = 3))) +
+    theme_bw(base_size = 11) +
+    theme(legend.position = "right",
+          legend.title = element_text(face = "bold", size = 10),
+          panel.grid.minor = element_blank())
 
   # Combine PC1 vs PC2 (side-by-side with legends on right)
   pc12_combined <- ggarrange(p_pc12_before, p_pc12_after, ncol = 2, widths = c(1, 1))
@@ -1119,35 +1452,53 @@ create_pca_comparison_plots <- function(pca_before, pca_after, method_name = "Br
   # ===========================================================================
   pc34_combined <- NULL
   if("PC3" %in% names(pca_before$plot_data) && "PC4" %in% names(pca_before$plot_data)) {
-    p_pc34_before <- ggplot(pca_before$plot_data, aes(x = PC3, y = PC4, color = Batch)) +
-      # Regular samples (colored by batch)
-      geom_point(data = pca_before$plot_data[IsBridge == FALSE], alpha = 0.7, size = 1.5, shape = 16) +
-      # Bridge samples (black circles, on top)
-      geom_point(data = pca_before$plot_data[IsBridge == TRUE], color = "black", alpha = 0.8, size = 2.5, shape = 21, fill = "black", stroke = 0.5) +
-      scale_color_manual(values = batch_colors,
-                         labels = c("batch_01" = "Batch 1", "batch_02" = "Batch 2")) +
-      labs(title = "PCA: PC3 vs PC4 (before normalisation)",
-           subtitle = paste0("Variance explained: PC3=", round(pca_before$var_explained[3]*100, 1), "%, PC4=", round(pca_before$var_explained[4]*100, 1), "%"),
+    p_pc34_before <- ggplot(pca_before$plot_data, aes(x = PC3, y = PC4)) +
+      # Non-bridge samples (dimmed background)
+      geom_point(data = pca_before$plot_data[Category %in% c("Batch1", "Batch2")],
+                 aes(color = Category), alpha = 0.3, size = 1.5, shape = 16) +
+      # Bridge samples (prominent, larger, filled squares shape 22)
+      geom_point(data = pca_before$plot_data[Category %in% c("Bridge_B1", "Bridge_B2")],
+                 aes(fill = Category), color = "black", alpha = 0.9, size = 3.5, shape = 22, stroke = 0.6) +
+      scale_color_manual(values = category_colors,
+                         labels = c("Batch1" = "Batch 1", "Batch2" = "Batch 2"),
+                         name = "Sample Type") +
+      scale_fill_manual(values = category_colors,
+                        labels = c("Bridge_B1" = "Bridge B1", "Bridge_B2" = "Bridge B2"),
+                        name = "Sample Type") +
+      labs(title = "Before Normalisation",
+           subtitle = paste0("PC3=", round(pca_before$var_explained[3]*100, 1), "%, PC4=", round(pca_before$var_explained[4]*100, 1), "%)"),
            x = paste0("PC3 (", round(pca_before$var_explained[3]*100, 1), "%)"),
-           y = paste0("PC4 (", round(pca_before$var_explained[4]*100, 1), "%)"),
-           color = "Batch") +
+           y = paste0("PC4 (", round(pca_before$var_explained[4]*100, 1), "%)")) +
+      guides(color = guide_legend(override.aes = list(alpha = 0.8, size = 3)),
+             fill = guide_legend(override.aes = list(alpha = 0.9, size = 3))) +
       theme_bw(base_size = 11) +
-      theme(legend.position = "right", panel.grid.minor = element_blank())
+      theme(legend.position = "right",
+            legend.title = element_text(face = "bold", size = 10),
+            panel.grid.minor = element_blank())
 
-    p_pc34_after <- ggplot(pca_after$plot_data, aes(x = PC3, y = PC4, color = Batch)) +
-      # Regular samples (colored by batch)
-      geom_point(data = pca_after$plot_data[IsBridge == FALSE], alpha = 0.7, size = 1.5, shape = 16) +
-      # Bridge samples (black circles, on top)
-      geom_point(data = pca_after$plot_data[IsBridge == TRUE], color = "black", alpha = 0.8, size = 2.5, shape = 21, fill = "black", stroke = 0.5) +
-      scale_color_manual(values = batch_colors,
-                         labels = c("batch_01" = "Batch 1", "batch_02" = "Batch 2")) +
-      labs(title = paste0("PCA: PC3 vs PC4 (after ", method_name, " normalisation)"),
-           subtitle = paste0("Variance explained: PC3=", round(pca_after$var_explained[3]*100, 1), "%, PC4=", round(pca_after$var_explained[4]*100, 1), "%"),
+    p_pc34_after <- ggplot(pca_after$plot_data, aes(x = PC3, y = PC4)) +
+      # Non-bridge samples (dimmed background)
+      geom_point(data = pca_after$plot_data[Category %in% c("Batch1", "Batch2")],
+                 aes(color = Category), alpha = 0.3, size = 1.5, shape = 16) +
+      # Bridge samples (prominent, larger, filled squares shape 22)
+      geom_point(data = pca_after$plot_data[Category %in% c("Bridge_B1", "Bridge_B2")],
+                 aes(fill = Category), color = "black", alpha = 0.9, size = 3.5, shape = 22, stroke = 0.6) +
+      scale_color_manual(values = category_colors,
+                         labels = c("Batch1" = "Batch 1", "Batch2" = "Batch 2"),
+                         name = "Sample Type") +
+      scale_fill_manual(values = category_colors,
+                        labels = c("Bridge_B1" = "Bridge B1", "Bridge_B2" = "Bridge B2"),
+                        name = "Sample Type") +
+      labs(title = paste0("After ", method_name, " Normalisation"),
+           subtitle = paste0("PC3=", round(pca_after$var_explained[3]*100, 1), "%, PC4=", round(pca_after$var_explained[4]*100, 1), "%)"),
            x = paste0("PC3 (", round(pca_after$var_explained[3]*100, 1), "%)"),
-           y = paste0("PC4 (", round(pca_after$var_explained[4]*100, 1), "%)"),
-           color = "Batch") +
+           y = paste0("PC4 (", round(pca_after$var_explained[4]*100, 1), "%)")) +
+      guides(color = guide_legend(override.aes = list(alpha = 0.8, size = 3)),
+             fill = guide_legend(override.aes = list(alpha = 0.9, size = 3))) +
       theme_bw(base_size = 11) +
-      theme(legend.position = "right", panel.grid.minor = element_blank())
+      theme(legend.position = "right",
+            legend.title = element_text(face = "bold", size = 10),
+            panel.grid.minor = element_blank())
 
     # Combine PC3 vs PC4 (side-by-side with legends on right)
     pc34_combined <- ggarrange(p_pc34_before, p_pc34_after, ncol = 2, widths = c(1, 1))
@@ -1427,6 +1778,224 @@ create_bridge_paired_boxplot <- function(batch1_matrix, batch2_matrix,
   ))
 }
 
+# Function to assess distribution alignment using Kolmogorov-Smirnov test
+assess_distribution_alignment <- function(batch1_npx, batch2_npx) {
+  # Test if distributions are similar before/after normalization
+  # Returns: KS test statistic, p-value, and alignment status
+
+  # Remove NAs and flatten to vectors
+  batch1_flat <- as.vector(batch1_npx)
+  batch2_flat <- as.vector(batch2_npx)
+  batch1_flat <- batch1_flat[!is.na(batch1_flat)]
+  batch2_flat <- batch2_flat[!is.na(batch2_flat)]
+
+  if(length(batch1_flat) == 0 || length(batch2_flat) == 0) {
+    return(list(
+      statistic = NA,
+      p_value = NA,
+      aligned = FALSE
+    ))
+  }
+
+  # Perform KS test
+  ks_result <- tryCatch({
+    ks.test(batch1_flat, batch2_flat)
+  }, error = function(e) {
+    log_warn("KS test failed: {e$message}")
+    return(list(statistic = NA, p.value = NA))
+  })
+
+  return(list(
+    statistic = if(!is.null(ks_result$statistic)) as.numeric(ks_result$statistic) else NA,
+    p_value = if(!is.null(ks_result$p.value)) as.numeric(ks_result$p.value) else NA,
+    aligned = !is.na(ks_result$p.value) && ks_result$p.value > 0.05  # Not significantly different
+  ))
+}
+
+# Function to calculate distribution statistics (kurtosis and skewness)
+calculate_distribution_stats <- function(data_vector) {
+  # Calculate kurtosis and skewness for a numeric vector
+  # Returns: list with kurtosis and skewness values
+
+  # Remove NAs
+  data_clean <- data_vector[!is.na(data_vector)]
+
+  if(length(data_clean) < 4) {
+    return(list(kurtosis = NA, skewness = NA))
+  }
+
+  # Calculate moments
+  n <- length(data_clean)
+  mean_val <- mean(data_clean)
+  sd_val <- sd(data_clean)
+
+  if(sd_val == 0) {
+    return(list(kurtosis = NA, skewness = NA))
+  }
+
+  # Skewness: E[(X - μ)^3] / σ^3
+  skewness <- sum((data_clean - mean_val)^3) / (n * sd_val^3)
+
+  # Kurtosis: E[(X - μ)^4] / σ^4 - 3 (excess kurtosis)
+  kurtosis <- sum((data_clean - mean_val)^4) / (n * sd_val^4) - 3
+
+  return(list(
+    kurtosis = kurtosis,
+    skewness = skewness
+  ))
+}
+
+# Function to create per-protein bridgeability plot (similar to olink_bridgeability_plot)
+# Creates 4-panel plot: violin+boxplot, scatter with correlation, KS test result, sample counts
+create_bridgeability_plot <- function(protein, batch1_bridge_matrix, batch2_bridge_matrix,
+                                      bridge_mapping, batch1_normalized = NULL, batch2_normalized = NULL) {
+  log_info("Creating bridgeability plot for protein: {protein}")
+
+  # Check if protein exists in both matrices
+  if(!protein %in% colnames(batch1_bridge_matrix) || !protein %in% colnames(batch2_bridge_matrix)) {
+    log_warn("Protein {protein} not found in bridge matrices")
+    return(NULL)
+  }
+
+  # Get paired values for bridge samples
+  npx_batch1_before <- batch1_bridge_matrix[bridge_mapping$SampleID_batch1, protein]
+  npx_batch2_before <- batch2_bridge_matrix[bridge_mapping$SampleID_batch2, protein]
+
+  # Remove NAs for analysis
+  valid_pairs <- !is.na(npx_batch1_before) & !is.na(npx_batch2_before)
+  npx_batch1_valid <- npx_batch1_before[valid_pairs]
+  npx_batch2_valid <- npx_batch2_before[valid_pairs]
+
+  if(length(npx_batch1_valid) < 5) {
+    log_warn("Insufficient valid pairs for protein {protein} (n={length(npx_batch1_valid)})")
+    return(NULL)
+  }
+
+  # Calculate correlation
+  cor_before <- cor(npx_batch1_valid, npx_batch2_valid, use = "complete.obs")
+
+  # KS test
+  ks_result <- assess_distribution_alignment(npx_batch1_valid, npx_batch2_valid)
+
+  # Prepare data for plotting
+  plot_data_before <- data.table(
+    NPX = c(npx_batch1_valid, npx_batch2_valid),
+    Batch = rep(c("Batch 1", "Batch 2"), each = length(npx_batch1_valid)),
+    Stage = "Before"
+  )
+
+  # Panel 1: Violin + boxplot
+  p_violin <- ggplot(plot_data_before, aes(x = Batch, y = NPX, fill = Batch)) +
+    geom_violin(alpha = 0.6, trim = FALSE) +
+    geom_boxplot(width = 0.2, fill = "white", outlier.shape = NA) +
+    scale_fill_manual(values = c("Batch 1" = "#E64B35", "Batch 2" = "#4DBBD5")) +
+    labs(title = paste0("NPX Distribution: ", protein),
+         subtitle = paste0("n = ", length(npx_batch1_valid), " bridge sample pairs"),
+         x = "Batch", y = "NPX") +
+    theme_bw() +
+    theme(legend.position = "none")
+
+  # Panel 2: Scatter plot with correlation
+  scatter_data <- data.table(
+    Batch1 = npx_batch1_valid,
+    Batch2 = npx_batch2_valid
+  )
+
+  p_scatter <- ggplot(scatter_data, aes(x = Batch1, y = Batch2)) +
+    geom_point(alpha = 0.6, color = "#4DBBD5", size = 2) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
+    geom_smooth(method = "lm", se = TRUE, color = "blue", alpha = 0.3) +
+    labs(title = "Bridge Sample Correlation",
+         subtitle = paste0("R = ", round(cor_before, 3), " | n = ", length(npx_batch1_valid)),
+         x = "Batch 1 NPX", y = "Batch 2 NPX") +
+    theme_bw()
+
+  # Panel 3: KS test result
+  ks_text <- if(!is.na(ks_result$p_value)) {
+    paste0("KS statistic: ", round(ks_result$statistic, 4), "\n",
+           "p-value: ", format(ks_result$p_value, scientific = TRUE, digits = 3), "\n",
+           "Aligned: ", ifelse(ks_result$aligned, "Yes", "No"))
+  } else {
+    "KS test: Failed"
+  }
+
+  p_ks <- ggplot() +
+    annotate("text", x = 0.5, y = 0.5, label = ks_text, size = 4, hjust = 0.5, vjust = 0.5) +
+    labs(title = "Distribution Comparison (KS Test)") +
+    theme_void() +
+    theme(plot.title = element_text(hjust = 0.5))
+
+  # Panel 4: NPX Distribution comparison with t-test
+  # Prepare data for distribution plot (before and after normalization)
+  if(!is.null(batch1_normalized) && !is.null(batch2_normalized)) {
+    # Get normalized values
+    npx_batch1_after <- batch1_normalized[, protein]
+    npx_batch2_after <- batch2_normalized[, protein]
+
+    # Remove NAs
+    npx_batch1_after_valid <- npx_batch1_after[!is.na(npx_batch1_after)]
+    npx_batch2_after_valid <- npx_batch2_after[!is.na(npx_batch2_after)]
+
+    # Combine before and after data
+    dist_plot_data <- rbind(
+      data.table(NPX = npx_batch1_valid, Batch = "Batch 1", Stage = "Before"),
+      data.table(NPX = npx_batch2_valid, Batch = "Batch 2", Stage = "Before"),
+      data.table(NPX = npx_batch1_after_valid, Batch = "Batch 1", Stage = "After"),
+      data.table(NPX = npx_batch2_after_valid, Batch = "Batch 2", Stage = "After")
+    )
+    dist_plot_data[, Stage := factor(Stage, levels = c("Before", "After"))]
+  } else {
+    # Only before data available
+    dist_plot_data <- data.table(
+      NPX = c(npx_batch1_valid, npx_batch2_valid),
+      Batch = rep(c("Batch 1", "Batch 2"), c(length(npx_batch1_valid), length(npx_batch2_valid))),
+      Stage = "Before"
+    )
+  }
+
+  # Create distribution plot with t-test
+  p_distribution <- ggplot(dist_plot_data, aes(x = Batch, y = NPX, fill = Batch)) +
+    geom_violin(alpha = 0.6, trim = FALSE) +
+    geom_boxplot(width = 0.2, fill = "white", outlier.shape = NA) +
+    facet_wrap(~ Stage, ncol = 2) +
+    scale_fill_manual(values = c("Batch 1" = "#E64B35", "Batch 2" = "#4DBBD5")) +
+    stat_compare_means(method = "t.test", label = "p.format",
+                       label.x.npc = "center", label.y.npc = 0.95, size = 3) +
+    labs(title = "NPX Distribution Comparison",
+         subtitle = paste0("n = ", length(npx_batch1_valid), " bridge sample pairs. T-test p-value shown"),
+         x = "Batch", y = "NPX") +
+    theme_bw() +
+    theme(legend.position = "none",
+          strip.background = element_rect(fill = "gray90"),
+          strip.text = element_text(face = "bold"))
+
+  # Combine all panels
+  combined_plot <- ggarrange(
+    p_violin, p_scatter, p_ks, p_distribution,
+    ncol = 2, nrow = 2
+  )
+
+  combined_plot <- annotate_figure(
+    combined_plot,
+    top = text_grob(paste0("Bridgeability Assessment: ", protein), face = "bold", size = 14)
+  )
+
+  return(list(
+    violin = p_violin,
+    scatter = p_scatter,
+    ks_test = p_ks,
+    distribution = p_distribution,
+    combined = combined_plot,
+    stats = list(
+      correlation = cor_before,
+      ks_statistic = ks_result$statistic,
+      ks_p_value = ks_result$p_value,
+      aligned = ks_result$aligned,
+      n_samples = length(npx_batch1_valid)
+    )
+  ))
+}
+
 # Function to create faceted NPX distribution plots with histogram+density and violin plots
 create_distribution_plots <- function(batch1_matrix, batch2_matrix, batch1_normalized, batch2_normalized,
                                      common_proteins, method_name = "Bridge") {
@@ -1472,6 +2041,25 @@ create_distribution_plots <- function(batch1_matrix, batch2_matrix, batch1_norma
   # Calculate medians for vertical lines
   medians <- plot_data[, .(median_npx = median(NPX, na.rm = TRUE)), by = .(Batch, Stage)]
 
+  # Calculate kurtosis and skewness for each batch and stage
+  dist_stats <- plot_data[, {
+    stats <- calculate_distribution_stats(NPX)
+    list(kurtosis = stats$kurtosis, skewness = stats$skewness)
+  }, by = .(Batch, Stage)]
+
+  # Create subtitle with kurtosis and skewness
+  subtitle_text <- paste0(
+    "Histogram with density overlay. Dashed lines = batch medians\n",
+    "Batch 1: Before (Kurt=", round(dist_stats[Batch=="Batch 1" & Stage=="Before", kurtosis], 2),
+    ", Skew=", round(dist_stats[Batch=="Batch 1" & Stage=="Before", skewness], 2),
+    ") | After (Kurt=", round(dist_stats[Batch=="Batch 1" & Stage=="After", kurtosis], 2),
+    ", Skew=", round(dist_stats[Batch=="Batch 1" & Stage=="After", skewness], 2), ")\n",
+    "Batch 2: Before (Kurt=", round(dist_stats[Batch=="Batch 2" & Stage=="Before", kurtosis], 2),
+    ", Skew=", round(dist_stats[Batch=="Batch 2" & Stage=="Before", skewness], 2),
+    ") | After (Kurt=", round(dist_stats[Batch=="Batch 2" & Stage=="After", kurtosis], 2),
+    ", Skew=", round(dist_stats[Batch=="Batch 2" & Stage=="After", skewness], 2), ")"
+  )
+
   # ===========================================================================
   # PANEL 1: Histogram + Density plots (Before on left, After on right)
   # ===========================================================================
@@ -1484,7 +2072,7 @@ create_distribution_plots <- function(batch1_matrix, batch2_matrix, batch1_norma
     scale_fill_manual(values = batch_colors) +
     scale_color_manual(values = batch_colors) +
     labs(title = paste0("NPX Distribution: ", method_name, " Normalisation"),
-         subtitle = "Histogram with density overlay. Dashed lines = batch medians",
+         subtitle = subtitle_text,
          x = "NPX Value", y = "Density") +
     theme_bw(base_size = 12) +
     theme(
@@ -1492,7 +2080,8 @@ create_distribution_plots <- function(batch1_matrix, batch2_matrix, batch1_norma
       legend.title = element_text(face = "bold"),
       strip.background = element_rect(fill = "gray90"),
       strip.text = element_text(face = "bold", size = 11),
-      panel.grid.minor = element_blank()
+      panel.grid.minor = element_blank(),
+      plot.subtitle = element_text(size = 9)  # Smaller subtitle for multi-line text
     )
 
   # ===========================================================================
@@ -1545,13 +2134,30 @@ create_distribution_plots <- function(batch1_matrix, batch2_matrix, batch1_norma
 }
 
 # Updated evaluation function for cross-batch normalization
-# NOTE: Uses SD/MAD/IQR instead of CV because CV is unchanged by multiplicative normalization
-# CV = SD/mean, and both scale proportionally with multiplicative normalization
+# NOTE: Now uses CV, SD, MAD, and IQR since we use additive normalization
+# CV is a valid metric for additive adjustments (NPX + offset)
 evaluate_cross_batch_normalization <- function(batch1_raw, batch2_raw, batch1_normalized, batch2_normalized,
                                                common_proteins, method_name) {
   log_info("╔══════════════════════════════════════════════════════════════════╗")
   log_info("║ EVALUATING {toupper(method_name)} NORMALIZATION                            ║")
   log_info("╚══════════════════════════════════════════════════════════════════╝")
+
+  # Calculate CV before normalization (common proteins only)
+  # CV = SD / mean, measures relative variability
+  cv_batch1_before <- apply(batch1_raw[, common_proteins, drop = FALSE], 2, function(x) {
+    sd(x, na.rm = TRUE) / mean(x, na.rm = TRUE)
+  })
+  cv_batch2_before <- apply(batch2_raw[, common_proteins, drop = FALSE], 2, function(x) {
+    sd(x, na.rm = TRUE) / mean(x, na.rm = TRUE)
+  })
+
+  # Calculate CV after normalization
+  cv_batch1_after <- apply(batch1_normalized[, common_proteins, drop = FALSE], 2, function(x) {
+    sd(x, na.rm = TRUE) / mean(x, na.rm = TRUE)
+  })
+  cv_batch2_after <- apply(batch2_normalized[, common_proteins, drop = FALSE], 2, function(x) {
+    sd(x, na.rm = TRUE) / mean(x, na.rm = TRUE)
+  })
 
   # Calculate SD before normalization (common proteins only)
   sd_batch1_before <- apply(batch1_raw[, common_proteins, drop = FALSE], 2, sd, na.rm = TRUE)
@@ -1572,6 +2178,17 @@ evaluate_cross_batch_normalization <- function(batch1_raw, batch2_raw, batch1_no
   iqr_batch2_before <- apply(batch2_raw[, common_proteins, drop = FALSE], 2, IQR, na.rm = TRUE)
   iqr_batch1_after <- apply(batch1_normalized[, common_proteins, drop = FALSE], 2, IQR, na.rm = TRUE)
   iqr_batch2_after <- apply(batch2_normalized[, common_proteins, drop = FALSE], 2, IQR, na.rm = TRUE)
+
+  # Calculate percentage reductions for CV
+  mean_cv_batch1_before <- mean(cv_batch1_before, na.rm = TRUE)
+  mean_cv_batch1_after <- mean(cv_batch1_after, na.rm = TRUE)
+  mean_cv_batch2_before <- mean(cv_batch2_before, na.rm = TRUE)
+  mean_cv_batch2_after <- mean(cv_batch2_after, na.rm = TRUE)
+
+  cv_reduction_batch1 <- ifelse(mean_cv_batch1_before > 0,
+    (mean_cv_batch1_before - mean_cv_batch1_after) / mean_cv_batch1_before * 100, NA_real_)
+  cv_reduction_batch2 <- ifelse(mean_cv_batch2_before > 0,
+    (mean_cv_batch2_before - mean_cv_batch2_after) / mean_cv_batch2_before * 100, NA_real_)
 
   # Calculate percentage reductions for SD
   mean_sd_batch1_before <- mean(sd_batch1_before, na.rm = TRUE)
@@ -1606,10 +2223,13 @@ evaluate_cross_batch_normalization <- function(batch1_raw, batch2_raw, batch1_no
   iqr_reduction_batch2 <- ifelse(mean_iqr_batch2_before > 0,
     (mean_iqr_batch2_before - mean_iqr_batch2_after) / mean_iqr_batch2_before * 100, NA_real_)
 
-  # Summary statistics table (SD/MAD/IQR metrics, not CV)
+  # Summary statistics table (CV, SD, MAD, IQR metrics)
   eval_stats <- data.table(
     method = method_name,
     batch = c("batch_01", "batch_02"),
+    mean_cv_before = c(mean_cv_batch1_before, mean_cv_batch2_before),
+    mean_cv_after = c(mean_cv_batch1_after, mean_cv_batch2_after),
+    cv_reduction_pct = c(cv_reduction_batch1, cv_reduction_batch2),
     mean_sd_before = c(mean_sd_batch1_before, mean_sd_batch2_before),
     mean_sd_after = c(mean_sd_batch1_after, mean_sd_batch2_after),
     sd_reduction_pct = c(sd_reduction_batch1, sd_reduction_batch2),
@@ -1621,23 +2241,29 @@ evaluate_cross_batch_normalization <- function(batch1_raw, batch2_raw, batch1_no
     iqr_reduction_pct = c(iqr_reduction_batch1, iqr_reduction_batch2)
   )
 
-  # Calculate overall improvement using SD (primary metric)
+  # Calculate overall improvement using CV (primary metric, Olink standard)
+  overall_cv_improvement <- mean(c(cv_reduction_batch1, cv_reduction_batch2), na.rm = TRUE)
   overall_sd_improvement <- mean(c(sd_reduction_batch1, sd_reduction_batch2), na.rm = TRUE)
 
   log_info("Batch 1 results:")
+  log_info("  CV: {round(mean_cv_batch1_before, 3)} → {round(mean_cv_batch1_after, 3)} ({round(cv_reduction_batch1, 2)}% reduction)")
   log_info("  SD: {round(mean_sd_batch1_before, 3)} → {round(mean_sd_batch1_after, 3)} ({round(sd_reduction_batch1, 2)}% reduction)")
   log_info("  MAD: {round(mean_mad_batch1_before, 3)} → {round(mean_mad_batch1_after, 3)} ({round(mad_reduction_batch1, 2)}% reduction)")
   log_info("  IQR: {round(mean_iqr_batch1_before, 3)} → {round(mean_iqr_batch1_after, 3)} ({round(iqr_reduction_batch1, 2)}% reduction)")
   log_info("Batch 2 results:")
+  log_info("  CV: {round(mean_cv_batch2_before, 3)} → {round(mean_cv_batch2_after, 3)} ({round(cv_reduction_batch2, 2)}% reduction)")
   log_info("  SD: {round(mean_sd_batch2_before, 3)} → {round(mean_sd_batch2_after, 3)} ({round(sd_reduction_batch2, 2)}% reduction)")
   log_info("  MAD: {round(mean_mad_batch2_before, 3)} → {round(mean_mad_batch2_after, 3)} ({round(mad_reduction_batch2, 2)}% reduction)")
   log_info("  IQR: {round(mean_iqr_batch2_before, 3)} → {round(mean_iqr_batch2_after, 3)} ({round(iqr_reduction_batch2, 2)}% reduction)")
+  log_info("Overall CV improvement: {round(overall_cv_improvement, 2)}%")
   log_info("Overall SD improvement: {round(overall_sd_improvement, 2)}%")
   log_info("════════════════════════════════════════════════════════════════════")
 
   return(list(
     eval_stats = eval_stats,
-    overall_improvement = overall_sd_improvement  # Use SD reduction as primary metric
+    overall_cv_improvement = overall_cv_improvement,  # Primary metric (Olink standard)
+    overall_sd_improvement = overall_sd_improvement,  # Secondary metric
+    overall_improvement = overall_cv_improvement  # For backward compatibility
   ))
 }
 
@@ -1847,8 +2473,28 @@ main <- function() {
     batch2_bridge_samples = batch2_bridge_samples
   )
 
+  # Get normalization method and reference batch from config
+  bridge_norm_config <- config$parameters$bridge_normalization %||% list()
+  norm_method <- bridge_norm_config$method %||% "olink_standard"
+  reference_batch_config <- bridge_norm_config$reference_batch
+
+  # Determine reference batch: use config if specified, otherwise default to larger batch
+  if(is.null(reference_batch_config) || reference_batch_config == "null") {
+    # Auto-select: use larger batch as reference
+    if(nrow(batch_matrices[[batch1_id]]) >= nrow(batch_matrices[[batch2_id]])) {
+      reference_batch <- batch1_id
+      log_info("Auto-selected reference batch: {batch1_id} (larger batch)")
+    } else {
+      reference_batch <- batch2_id
+      log_info("Auto-selected reference batch: {batch2_id} (larger batch)")
+    }
+  } else {
+    reference_batch <- reference_batch_config
+    log_info("Using reference batch from config: {reference_batch}")
+  }
+
   # Perform cross-batch bridge normalization (PRIMARY METHOD)
-  log_info("Performing cross-batch bridge normalization (bridge method - PRIMARY)")
+  log_info("Performing cross-batch bridge normalization (method: {norm_method})")
   cross_batch_result_bridge <- cross_batch_bridge_normalization(
     batch_matrices[[batch1_id]],
     batch_matrices[[batch2_id]],
@@ -1856,7 +2502,8 @@ main <- function() {
     batch2_bridge_finngenids,
     batch_sample_mappings[[batch1_id]],
     batch_sample_mappings[[batch2_id]],
-    method = "median"  # Bridge normalization uses median method
+    method = norm_method,
+    reference_batch = reference_batch
   )
 
   if (is.null(cross_batch_result_bridge)) {
@@ -1936,35 +2583,43 @@ main <- function() {
     all_evaluations <- rbind(all_evaluations, eval_combat$eval_stats)
   }
 
-  # Select best method based on SD reduction (average across both batches)
-  # NOTE: Using SD reduction instead of CV because CV is unchanged by multiplicative normalization
-  bridge_sd_reduction <- eval_bridge$overall_improvement
-  median_sd_reduction <- eval_median$overall_improvement
-  combat_sd_reduction <- if(!is.null(eval_combat)) eval_combat$overall_improvement else -Inf
+  # Select best method based on CV reduction (Olink standard, primary metric)
+  # NOTE: CV is now valid since we use additive normalization (not multiplicative)
+  bridge_cv_reduction <- eval_bridge$overall_cv_improvement
+  median_cv_reduction <- eval_median$overall_cv_improvement
+  combat_cv_reduction <- if(!is.null(eval_combat)) eval_combat$overall_cv_improvement else -Inf
+
+  # Also track SD for secondary comparison
+  bridge_sd_reduction <- eval_bridge$overall_sd_improvement
+  median_sd_reduction <- eval_median$overall_sd_improvement
+  combat_sd_reduction <- if(!is.null(eval_combat)) eval_combat$overall_sd_improvement else -Inf
 
   best_method <- "bridge"
+  best_cv_reduction <- bridge_cv_reduction
   best_sd_reduction <- bridge_sd_reduction
 
-  if (median_sd_reduction > best_sd_reduction) {
+  if (median_cv_reduction > best_cv_reduction) {
     best_method <- "median"
+    best_cv_reduction <- median_cv_reduction
     best_sd_reduction <- median_sd_reduction
   }
-  if (combat_sd_reduction > best_sd_reduction) {
+  if (combat_cv_reduction > best_cv_reduction) {
     best_method <- "combat"
+    best_cv_reduction <- combat_cv_reduction
     best_sd_reduction <- combat_sd_reduction
   }
 
   log_info("")
   log_info("╔══════════════════════════════════════════════════════════════════╗")
-  log_info("║ METHOD COMPARISON (SD REDUCTION %)                               ║")
+  log_info("║ METHOD COMPARISON (CV & SD REDUCTION %)                          ║")
   log_info("╚══════════════════════════════════════════════════════════════════╝")
-  log_info("  Bridge method: SD improvement = {round(bridge_sd_reduction, 2)}%")
-  log_info("  Median method: SD improvement = {round(median_sd_reduction, 2)}%")
+  log_info("  Bridge method: CV improvement = {round(bridge_cv_reduction, 2)}%, SD improvement = {round(bridge_sd_reduction, 2)}%")
+  log_info("  Median method: CV improvement = {round(median_cv_reduction, 2)}%, SD improvement = {round(median_sd_reduction, 2)}%")
   if(!is.null(eval_combat)) {
-    log_info("  ComBat method: SD improvement = {round(combat_sd_reduction, 2)}%")
+    log_info("  ComBat method: CV improvement = {round(combat_cv_reduction, 2)}%, SD improvement = {round(combat_sd_reduction, 2)}%")
   }
   log_info("")
-  log_info("  ★ Best method: {toupper(best_method)} (SD improvement: {round(best_sd_reduction, 2)}%)")
+  log_info("  ★ Best method: {toupper(best_method)} (CV improvement: {round(best_cv_reduction, 2)}%, SD improvement: {round(best_sd_reduction, 2)}%)")
   log_info("════════════════════════════════════════════════════════════════════")
 
   # Create PCA plots AFTER normalization (using bridge method as primary)
@@ -2198,6 +2853,81 @@ main <- function() {
     log_info("  Saved ComBat distribution plot: {dist_combat_path}")
   }
 
+  # ===========================================================================
+  # Per-Protein Bridgeability Plots (if specified in config)
+  # ===========================================================================
+  bridgeability_proteins <- bridge_norm_config$bridgeability_proteins %||% character(0)
+
+  if(length(bridgeability_proteins) > 0) {
+    log_info("Generating per-protein bridgeability plots for {length(bridgeability_proteins)} proteins")
+
+    # Get bridge data for plotting
+    batch1_bridge_data_plot <- batch_matrices[[batch1_id]][cross_batch_result_bridge$batch1_bridge_samples_used, common_proteins, drop = FALSE]
+    batch2_bridge_data_plot <- batch_matrices[[batch2_id]][cross_batch_result_bridge$batch2_bridge_samples_used, common_proteins, drop = FALSE]
+
+    # Create bridge mapping for plotting
+    bridge_mapping_plot <- merge(
+      batch_sample_mappings[[batch1_id]][SampleID %in% cross_batch_result_bridge$batch1_bridge_samples_used, .(SampleID_batch1 = SampleID, FINNGENID)],
+      batch_sample_mappings[[batch2_id]][SampleID %in% cross_batch_result_bridge$batch2_bridge_samples_used, .(SampleID_batch2 = SampleID, FINNGENID)],
+      by = "FINNGENID"
+    )
+
+    # Get normalized bridge data if available
+    batch1_bridge_normalized_plot <- NULL
+    batch2_bridge_normalized_plot <- NULL
+    if(!is.null(batch1_normalized_bridge) && !is.null(batch2_normalized_bridge)) {
+      batch1_bridge_normalized_plot <- batch1_normalized_bridge[cross_batch_result_bridge$batch1_bridge_samples_used, common_proteins, drop = FALSE]
+      batch2_bridge_normalized_plot <- batch2_normalized_bridge[cross_batch_result_bridge$batch2_bridge_samples_used, common_proteins, drop = FALSE]
+    }
+
+    # Generate plots for each specified protein
+    for(protein in bridgeability_proteins) {
+      # Check if protein exists (try both name and column match)
+      protein_match <- NULL
+      if(protein %in% common_proteins) {
+        protein_match <- protein
+      } else {
+        # Try partial match (case-insensitive)
+        protein_match <- grep(paste0("^", protein, "$"), common_proteins, ignore.case = TRUE, value = TRUE)
+        if(length(protein_match) == 0) {
+          # Try OlinkID format
+          protein_match <- grep(protein, common_proteins, value = TRUE)
+        }
+        if(length(protein_match) > 1) {
+          log_warn("Multiple matches for protein '{protein}': {paste(protein_match, collapse=', ')}. Using first match.")
+          protein_match <- protein_match[1]
+        }
+      }
+
+      if(is.null(protein_match) || length(protein_match) == 0) {
+        log_warn("Protein '{protein}' not found in common proteins. Skipping bridgeability plot.")
+        next
+      }
+
+      log_info("Creating bridgeability plot for: {protein_match} (requested: {protein})")
+
+      # Create plot (before normalization only for now)
+      bridgeability_plot <- create_bridgeability_plot(
+        protein_match,
+        batch1_bridge_data_plot,
+        batch2_bridge_data_plot,
+        bridge_mapping_plot,
+        batch1_bridge_normalized_plot,
+        batch2_bridge_normalized_plot
+      )
+
+      if(!is.null(bridgeability_plot)) {
+        # Save plot
+        bridgeability_path <- get_output_path(step_num, paste0("bridgeability_", protein_match), output_batch_id, "normalized", "pdf", config = config)
+        ensure_output_dir(bridgeability_path)
+        ggsave(bridgeability_path, bridgeability_plot$combined, width = 12, height = 10)
+        log_info("  Saved bridgeability plot: {bridgeability_path}")
+        log_info("    Correlation: R={round(bridgeability_plot$stats$correlation, 3)}, KS p={format(bridgeability_plot$stats$ks_p_value, scientific=TRUE, digits=3)}")
+      }
+    }
+  } else {
+    log_info("No bridgeability proteins specified in config. Skipping per-protein plots.")
+  }
 
   # Print summary with comprehensive formatting
   common_bridge_count <- length(intersect(batch1_bridge_finngenids, batch2_bridge_finngenids))

@@ -106,7 +106,7 @@ parameters:
       tier2_percentile: 0.80  # Moderate-confidence
       tier3_percentile: 0.65  # Low-confidence
 
-  # Normalization
+  # Normalization (Step 06)
   normalization:
     method: "bridge_normalization"  # or "median_normalization"
     # Reference batch ID for bridge normalization (required when multi_batch_mode: true)
@@ -116,6 +116,18 @@ parameters:
     enhanced_bridge_input: "raw"  # Input for step 07: "raw" or "step06_median"
     # Set to true when integrating multiple batches (requires 'batches' section to be configured)
     multi_batch_mode: false  # When true, pipeline processes batches sequentially with reference batch first
+
+  # Cross-batch bridge normalization (Step 07)
+  bridge_normalization:
+    # Reference batch for Olink standard normalization (unchanged during normalization)
+    # If null, will default to larger batch or batch with better QC
+    reference_batch: "batch_02"  # Options: "batch_01", "batch_02", or null for auto-selection
+    # Normalization method: "olink_standard" (default, adjusts only non-reference) or "combined_reference" (adjusts both)
+    method: "olink_standard"
+    # Per-protein bridgeability plots: list of protein names/OlinkIDs to generate detailed QC plots
+    # If empty list [], no bridgeability plots will be generated
+    # Example: ["IL6", "TNF", "OID40770", "MST1", "LAIR2"]
+    bridgeability_proteins: []  # List of proteins for per-protein bridgeability assessment
 
   # Aggregation (only used when multi_batch_mode: true)
   aggregation:

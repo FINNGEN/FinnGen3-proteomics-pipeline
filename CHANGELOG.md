@@ -42,7 +42,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Features
+### Added
+
+* **bridge_normalization:** Olink standard bridge normalization implementation
+  * Implemented pairwise difference calculation for bridge samples (same FINNGENID across batches)
+  * Reference batch remains unchanged (Olink standard approach)
+  * Only non-reference batch is adjusted using median of pairwise differences
+  * Aligns with official OlinkAnalyze package methodology
+  * Added `parameters.bridge_normalization.reference_batch` config option
+  * Added `parameters.bridge_normalization.method` config option ("olink_standard" or "combined_reference")
+  * Added `parameters.bridge_normalization.bridgeability_proteins` for per-protein QC plots
+
+* **bridge_normalization:** Enhanced PCA visualizations
+  * Added silhouette score calculations for clustering quality assessment
+
+* **bridge_normalization:** Reintroduced Coefficient of Variation (CV) metric
+  * CV (SD/mean) is now the primary metric for normalization method selection
+  * Aligns with Olink standard evaluation approach
+  * CV reduction percentage calculated for all normalization methods
+  * Best method automatically selected based on highest CV reduction
+  * CV metrics logged for both batches before and after normalization
+
+* **bridge_normalization:** Enhanced distribution plots
+  * Added kurtosis and skewness measures for before/after normalization
+  * Distribution shape metrics displayed in plot subtitles
+  * Applied to bridge, median, and ComBat normalization effect plots
+
+* **bridge_normalization:** Improved bridgeability assessment
+  * Replaced rudimentary sample counts panel with distribution plots
+  * NPX value distributions shown across batches before/after normalization
+  * Pairwise t-test p-values included for statistical comparison
+  * Per-protein bridgeability plots configurable via YAML
+  * Enhanced correlation and effect size metrics
+
+* **README:** Comprehensive documentation updates
+  * Detailed explanation of Olink standard bridge normalization algorithm
+  * Documentation of pairwise difference calculation approach
+  * Reference batch strategy explained
+  * Enhanced visualization features documented
+  * Evaluation metrics section added (CV, SD, MAD, IQR, kurtosis, skewness, silhouette)
+  * Configuration options for bridge normalization detailed
+
+### Changed
 
 * **pipeline:** Make covariate adjustment config-driven with age and sex as defaults
   * Modified step 08 to read covariates from config.yaml as a list
@@ -52,17 +93,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * Added validation to ensure only valid covariates (age, sex, bmi, smoking) are used
   * Improved logging to show which covariates are being adjusted
 
-### Bug Fixes
+* **config.yaml.template:** Enhanced bridge normalization configuration section
+  * Added dedicated `parameters.bridge_normalization` section
+  * Reference batch selection (null for auto-selection)
+  * Method selection (olink_standard vs combined_reference)
+  * Bridgeability proteins list for detailed QC
 
-* **pipeline:** Fix step 05c skip logic to prevent execution when disabled
-  * Fixed issue where step 05c_provenance_test executed setup code even when disabled
-  * Changed from `quit()` to `stop("STEP_SKIPPED")` to properly halt execution when sourced
-  * Pipeline now correctly skips step 05c and proceeds to step 05d when test_case.enabled: false
+### Fixed
 
-* **pipeline:** Make Youden J detection failure-proof and remove hardcoded batch references
-  * Enhanced log file detection to work in both single-batch and multi-batch modes
-  * Added multi-fallback approach for log file path detection
-  * Removed hardcoded batch references, now uses config-driven batch determination
+* **bridge_normalization:** Validation and error handling improvements
+  * Added validation for bridge_mapping sample pairing
+  * Ensured bridge matrices match expected dimensions
+  * Improved error messages for debugging
+  * Fixed nested conditional logic for method selection
 
 ## [1.0.0] (2026-01-23)
 

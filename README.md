@@ -457,25 +457,47 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
 - **Purpose**: **Cross-batch normalisation** for multi-batch integration and harmonisation
 - **When to run**: Only when integrating multiple batches (e.g., batch_01 + batch_02)
 - **CRITICAL**: This step handles **ALL cross-batch normalisation methods** (bridge, ComBat). Step 06 performs only within-batch normalisation
-- **Important**: NPX values are already log2-transformed. This step uses **additive adjustment** (not multiplicative scaling):
+- **Algorithm**: Implements **Olink standard bridge normalisation** using pairwise differences:
   ```
-  offset = batch_bridge_median - reference_median  (per protein)
-  NPX_adjusted = NPX - offset  (shifts distribution to align with reference)
+  # For each protein, for each bridge sample pair:
+  diff_sample_i = NPX_reference[sample_i, protein] - NPX_target[sample_i, protein]
+
+  # Adjustment factor = median of all pairwise differences
+  Adj_factor[protein] = median(diff_sample_1, diff_sample_2, ..., diff_sample_n)
+
+  # Apply additive adjustment to target batch only (reference unchanged)
+  NPX_target_adjusted = NPX_target + Adj_factor
   ```
+- **Key Principles**:
+  - **Reference batch unchanged**: Only the non-reference batch is adjusted (Olink standard)
+  - **Pairwise differences**: Uses median of **pairwise** differences (same sample in both batches), preserving sample-level pairing information
+  - **Per-protein adjustment**: One adjustment factor per protein
+  - **Additive adjustment**: `NPX_adjusted = NPX + Adj_factor` (because NPX is already log2-transformed)
 - **Methods**:
-  - **Bridge Normalisation** (preferred for cross-batch harmonisation):
-    - Uses bridge samples from both batches to calculate combined reference medians
-    - Calculates per-protein **additive offsets** (batch median - combined reference median)
-    - Applies offset subtraction to shift distributions to a common reference
+  - **Olink Standard Bridge Normalisation** (default, recommended):
+    - Uses pairwise differences between bridge samples (same FINNGENID in both batches)
+    - Reference batch remains unchanged
+    - Only target batch is adjusted: `NPX_target = NPX_target + Adj_factor`
     - Requires ≥10 bridge samples for successful normalisation
-    - Uses bridge samples shared between batches (same FINNGENIDs, different SampleIDs)
-  - **ComBat Normalisation** (alternative cross-batch method):
+    - Aligns with official OlinkAnalyze package methodology
+  - **Combined Reference Method** (alternative, backward compatibility):
+    - Both batches adjusted toward a combined median reference
+    - Uses batch-level medians (loses sample-level pairing)
+    - Available via config: `method: "combined_reference"`
+  - **ComBat Normalisation** (comparison method):
     - Batch correction using empirical Bayes framework
     - Requires multiple batches to function properly
-  - **Quantile Normalisation** (alternative method):
+  - **Quantile Normalisation** (comparison method):
     - Aligns entire distributions across batches
 - **Fallback Strategy**: If bridge normalisation fails (insufficient bridge samples <10), the pipeline may fall back to ComBat or quantile methods
-- **Evaluation**: Cross-batch comparison metrics, calibration evaluation, and visualisation plots
+- **Evaluation Metrics**:
+  - **Coefficient of Variation (CV)**: Primary metric for method selection (SD/mean, measures relative variability)
+  - **Standard Deviation (SD)**: Absolute variability measure
+  - **Median Absolute Deviation (MAD)**: Robust variability measure
+  - **Interquartile Range (IQR)**: Distribution spread measure
+  - **Kurtosis and Skewness**: Distribution shape measures
+  - **Silhouette Scores**: Clustering quality for bridge samples (PCA-based)
+- **Best Method Selection**: Automatically selects best normalization method based on CV reduction (Olink standard metric)
 - **Output** (per-batch cross-batch normalised matrices):
   - `07_npx_matrix_cross_batch_bridge_{batch}.rds`: Cross-batch bridge normalised matrix (one per batch)
   - `07_npx_matrix_cross_batch_median_{batch}.rds`: Cross-batch median normalised matrix (comparison)
@@ -491,9 +513,18 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
     - Panel A: NPX distribution by batch before/after normalisation
     - Panel B: Paired line plot connecting same FINNGENID across batches
     - Panel C: Distribution of absolute batch differences (reduction metric)
-  - `07_normalization_effect_bridge_*.pdf`: Bridge normalisation effect (histogram+density+violin with t-test)
-  - `07_normalization_effect_median_*.pdf`: Median normalisation effect (histogram+density+violin with t-test)
-  - `07_normalization_effect_combat_*.pdf`: ComBat normalisation effect (histogram+density+violin with t-test)
+  - `07_normalization_effect_bridge_*.pdf`: Bridge normalisation effect with kurtosis and skewness measures (histogram+density+violin with t-test)
+  - `07_normalization_effect_median_*.pdf`: Median normalisation effect with kurtosis and skewness measures (histogram+density+violin with t-test)
+  - `07_normalization_effect_combat_*.pdf`: ComBat normalisation effect with kurtosis and skewness measures (histogram+density+violin with t-test)
+  - `07_bridgeability_{protein}_*.pdf`: Per-protein bridgeability plots (if specified in config):
+    - Panel 1: Distribution plots showing NPX values across batches before/after normalisation with pairwise t-test p-values
+    - Panel 2: Scatter plot of paired bridge sample values with correlation
+    - Panel 3: KS test result for distribution comparison
+    - Panel 4: Correlation and effect size metrics
+- **Configuration**:
+  - `parameters.bridge_normalization.reference_batch`: Reference batch ID ("batch_01", "batch_02", or null for auto-select)
+  - `parameters.bridge_normalization.method`: "olink_standard" (default) or "combined_reference"
+  - `parameters.bridge_normalization.bridgeability_proteins`: List of protein names/OlinkIDs for detailed QC plots (empty list = skip)
 
 #### 08_covariate_adjustment.R
 - **Purpose**: Adjust for biological covariates using linear regression
@@ -946,6 +977,22 @@ export PIPELINE_BATCH_ID=batch_01
 Rscript scripts/01_pca_outliers.R
 ```
 
+### Running from a Specific Step
+
+To run the pipeline from a specific step (e.g., after QC is complete):
+
+```bash
+Rscript scripts/run_pipeline.R \
+  --config config/config.yaml \
+  --from 05d_qc_comprehensive_report \
+  --to 11_rank_normalize
+```
+
+**Note**: When running from step 05d onwards in multi-batch mode:
+- Ensure all batches have completed steps 00-05d (QCed matrices must exist)
+- Step 07 (bridge normalization) requires QCed matrices from all batches
+- Aggregation (steps 09-11) requires normalized matrices from all batches
+
 ## Pipeline Design Principles
 
 1. **Modular Architecture**: Each step is a standalone script that can be run independently
@@ -1029,7 +1076,30 @@ parameters:
 
 When enabled, steps 09-11 will create additional aggregate outputs combining data from all batches.
 
-#### Step 4: Configure Covariate Adjustment (Optional)
+#### Step 4: Configure Bridge Normalization (Step 07)
+
+For Olink standard bridge normalization with per-protein QC plots:
+
+```yaml
+parameters:
+  bridge_normalization:
+    # Reference batch (unchanged during normalization)
+    reference_batch: "batch_02"  # or "batch_01", or null for auto-select
+    # Normalization method
+    method: "olink_standard"  # Default: Olink standard (pairwise differences, reference unchanged)
+    # Per-protein bridgeability plots (empty list = skip)
+    bridgeability_proteins:
+      - "MST1"
+      - "LAIR2"
+      - "ACP6"
+      # ... add more proteins as needed
+```
+
+**Bridge Normalization Methods:**
+- **`olink_standard`** (default, recommended): Uses pairwise differences, reference batch unchanged
+- **`combined_reference`**: Both batches adjusted toward combined median (backward compatibility)
+
+#### Step 5: Configure Covariate Adjustment (Optional)
 
 By default, the pipeline adjusts for age and sex only. To customize which covariates to adjust for:
 
