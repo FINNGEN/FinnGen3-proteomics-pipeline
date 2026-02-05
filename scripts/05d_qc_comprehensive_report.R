@@ -369,15 +369,25 @@ main <- function() {
     }
 
     # step 04: Sex outliers (threshold-based, not strict mismatch)
+    # Check configuration to determine if threshold-based outliers should be removed
+    sex_outlier_mode <- tryCatch(
+        config$parameters$outliers$sex_outlier_mode %||% "all",
+        error = function(e) "all"
+    )
+
     sex_outlier_path <- get_output_path("04", "sex_outliers", batch_id, "outliers", "tsv", config = config)
-    if (file.exists(sex_outlier_path)) {
+    if (file.exists(sex_outlier_path) && sex_outlier_mode == "all") {
         sex_outlier_dt <- fread(sex_outlier_path)
         id_col <- if ("SAMPLE_ID" %in% names(sex_outlier_dt)) "SAMPLE_ID" else "SampleID"
         step04_outliers <- sex_outlier_dt[[id_col]]
-        log_info("step 04 (Sex Outlier - Threshold): {length(step04_outliers)} samples")
+        log_info("step 04 (Sex Outlier - Threshold): {length(step04_outliers)} samples [sex_outlier_mode='{sex_outlier_mode}']")
     } else {
         step04_outliers <- character(0)
-        log_warn("step 04 sex outliers not found: {sex_outlier_path}")
+        if (sex_outlier_mode == "strict_only") {
+            log_info("step 04 (Sex Outlier - Threshold): SKIPPED - sex_outlier_mode='strict_only' (keeping threshold outliers)")
+        } else {
+            log_warn("step 04 sex outliers not found: {sex_outlier_path}")
+        }
     }
 
     # step 05b: pQTL outliers

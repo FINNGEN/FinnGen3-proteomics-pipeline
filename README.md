@@ -356,16 +356,26 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
   1. **Strict Mismatches** (predicted_sex ≠ genetic_sex):
      - Definition: Samples where predicted sex label (based on 0.5 probability threshold) differs from genetic sex
      - Logic: `predicted_sex != genetic_sex`
-     - Purpose: Identify actual classification errors
+     - Purpose: Identify actual classification errors (label mismatch)
      - Expected: ~0.92% of PCA-cleaned samples (e.g., 23/2,505)
-  2. **Sex Outliers** (threshold-based deviations, NOT strict mismatches):
-     - Definition: Samples where predicted female probability deviates from expected thresholds but predicted_sex still matches genetic_sex
-     - Purpose: Identify borderline cases with unusual predicted probabilities
+  2. **Threshold-Based Outliers** (cross thresholds but predicted_sex matches genetic_sex):
+     - Definition: Samples in the gap between 0.5 and Youden's J threshold, correctly labeled but with borderline probabilities
+     - **Critical Insight**: Which sex can be outliers depends on Youden's J position:
+       - **When Youden > 0.5**: Only **females** can be outliers (correctly labeled, prob in [0.5, Youden))
+       - **When Youden < 0.5**: Only **males** can be outliers (correctly labeled, prob in [Youden, 0.5))
+       - Males/females in these ranges but with wrong genetic sex become TIER 1 mismatches, not outliers
+     - Purpose: Identify borderline predictions with unusual probabilities but correct labels
      - Expected: ~0.32% of PCA-cleaned samples (e.g., 8/2,505)
+     - See `SEX_OUTLIER_DETECTION_ALGORITHM.md` for complete technical specification
+- **Configurable Outlier Handling** (`parameters.outliers.sex_outlier_mode`):
+  - **`"all"`** (default): Remove both TIER 1 strict mismatches AND TIER 2 threshold-based outliers
+  - **`"strict_only"`**: Remove only TIER 1 strict mismatches, keep TIER 2 threshold-based outliers in dataset
+  - This allows analysts to retain borderline cases that may represent valid biological variation
 - **Note to Analysts**: Biological factors beyond sample swaps can produce sex-atypical proteomic profiles. This includes samples from individuals undergoing gender-affirming hormone therapy, paediatric samples (where sex-specific signatures may be less pronounced), and individuals with sex chromosome abnormalities. These flags reflect biological variation rather than technical errors. Analysts should evaluate flagged samples in their clinical and developmental context before exclusion.
 - **Output**:
   - `04_sex_predictions.tsv`: All samples with predicted probabilities
-  - `04_sex_mismatches.tsv`: Union of mismatches and sex outliers
+  - `04_sex_mismatches.tsv`: TIER 1 strict mismatches only (predicted_sex ≠ genetic_sex)
+  - `04_sex_outliers.tsv`: TIER 2 threshold-based outliers (not strict mismatches)
   - `04_sex_associated_proteins.tsv`: Univariate discovery results
   - `04_npx_matrix_sex_cleaned.rds`: Sex-cleaned matrix
 
@@ -785,8 +795,8 @@ Phase 4: Steps 09-11 (per-batch + aggregation)
 | **PCA (PC3/PC4)** | mean ± 5×SD | Sequential filtering, union of flags |
 | **PCA (Sample median)** | mean ± 5×SD | Detects extreme central tendency |
 | **PCA (Sample IQR)** | mean ± 5×SD | Detects unusual variability patterns |
-| **Sex mismatch** | predicted_sex ≠ genetic_sex (0.5 threshold) | Binary label error, severe classification errors |
-| **Sex outlier** | 0.5 threshold | Borderline predictions, mild warning |
+| **Sex mismatch (TIER 1)** | predicted_sex ≠ genetic_sex (0.5 threshold) | Binary label error, severe classification errors |
+| **Sex outlier (TIER 2)** | Gap between 0.5 and Youden's J | Borderline predictions, correct labels, sex-specific based on Youden position |
 | **Technical (Plate/Batch/Processing)** | 5×MAD ≈ 4×SD | Robust, harmonised with z-score method |
 | **Technical (Sample mean NPX)** | 5×MAD ≈ 4×SD | Two-sided, robust to outliers |
 | **Technical (Sample SD NPX)** | median + 4×MAD | One-sided upper, high variance detection |

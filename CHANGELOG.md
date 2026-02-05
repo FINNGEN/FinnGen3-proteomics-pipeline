@@ -51,6 +51,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+* **sex_outliers:** Configurable sex outlier handling mode
+  * New configuration parameter `parameters.outliers.sex_outlier_mode` with two options:
+    * `"all"` (default): Remove both TIER 1 strict mismatches AND TIER 2 threshold-based outliers
+    * `"strict_only"`: Remove only TIER 1 strict mismatches, keep TIER 2 threshold-based outliers
+  * Allows analysts to retain borderline cases that may represent valid biological variation
+  * Updated scripts: `04_sex_outliers.R`, `05d_qc_comprehensive_report.R`
+  * Configuration-aware logging in step 04 and step 05d
+
+* **documentation:** Comprehensive sex outlier detection algorithm specification
+  * Created `SEX_OUTLIER_DETECTION_ALGORITHM.md` (untracked development document)
+  * Corrected explanation of TIER 2 outliers: they exist in the gap between 0.5 and Youden's J
+  * Critical insight: which sex can be TIER 2 outliers depends on Youden's J position
+  * When Youden > 0.5: only females can be TIER 2 outliers
+  * When Youden < 0.5: only males can be TIER 2 outliers
+  * Updated README.md with corrected two-tier QC approach explanation
+
 * **bridge_normalization:** Olink standard bridge normalization implementation
   * Implemented pairwise difference calculation for bridge samples (same FINNGENID across batches)
   * Reference batch remains unchanged (Olink standard approach)

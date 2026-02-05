@@ -75,6 +75,11 @@ parameters:
     pca_sd_threshold: 3  # Standard deviations for PCA outlier
     zscore_threshold: 4  # Z-score threshold for outlier detection
     sex_outlier_method: "protein_based"  # or "genetic_based"
+    # Sex outlier handling mode:
+    # - "strict_only": Only flag and remove TIER 1 strict mismatches (predicted_sex != genetic_sex)
+    #                  TIER 2 threshold-based outliers are kept in the dataset
+    # - "all": Flag and remove both TIER 1 strict mismatches AND TIER 2 threshold-based outliers (default)
+    sex_outlier_mode: "all"  # Options: "strict_only" or "all"
     run_nn: true  # Whether to run the MLP neural network
     run_autoencoder: true  # Whether to run the Autoencoder+Classifier model
     run_svm: true  # Whether to run the Support Vector Machine model

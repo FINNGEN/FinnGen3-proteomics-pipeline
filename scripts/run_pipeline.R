@@ -624,28 +624,28 @@ main <- function() {
     # When aggregate_output=true, scripts will automatically aggregate after processing their batch
     aggregation_steps_to_run <- intersect(steps_to_run, aggregation_steps)
     if (length(aggregation_steps_to_run) > 0) {
-      if (aggregate_output) {
+    if (aggregate_output) {
         phase4_msg <- paste0("\nPhase 4: Running steps 09-11 per-batch (scripts will aggregate outputs)\n")
         cat(phase4_msg)
         log_info("Phase 4: Running steps 09-11 per-batch (scripts will aggregate outputs)")
         log_info("  Scripts detect aggregate_output=true and merge batch outputs internally")
-      } else {
+    } else {
         phase4_msg <- paste0("\nPhase 4: Processing batches through steps 09-11 (no aggregation)\n")
         cat(phase4_msg)
         log_info("Phase 4: Processing batches through steps 09-11 (no aggregation)")
       }
 
-      for (batch_id in batches) {
-        for (step in aggregation_steps_to_run) {
-          success <- run_step_for_batch(step, batch_id, config, isTRUE(args$dry_run))
-          if (success) {
+        for (batch_id in batches) {
+          for (step in aggregation_steps_to_run) {
+            success <- run_step_for_batch(step, batch_id, config, isTRUE(args$dry_run))
+            if (success) {
             if (!batch_id %in% names(batch_results)) {
               batch_results[[batch_id]] <- list(success = 0, failed = character())
             }
-            batch_results[[batch_id]]$success <- batch_results[[batch_id]]$success + 1
-            success_count <- success_count + 1
-          } else {
-            failed_step <- paste0(step, " (", batch_id, ")")
+              batch_results[[batch_id]]$success <- batch_results[[batch_id]]$success + 1
+              success_count <- success_count + 1
+            } else {
+              failed_step <- paste0(step, " (", batch_id, ")")
             if (!batch_id %in% names(batch_results)) {
               batch_results[[batch_id]] <- list(success = 0, failed = character())
             }

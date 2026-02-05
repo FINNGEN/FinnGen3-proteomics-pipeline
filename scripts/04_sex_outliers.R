@@ -2074,8 +2074,21 @@ main <- function() {
   fwrite(threshold_outliers, sex_outliers_path, sep = "\t")
   log_info("Saved {nrow(threshold_outliers)} threshold-based outliers (not strict mismatches) to: {sex_outliers_path}")
 
+  # Check sex outlier mode configuration
+  sex_outlier_mode <- tryCatch(
+    config$parameters$outliers$sex_outlier_mode %||% "all",
+    error = function(e) "all"
+  )
+
   # Summary statistics
   log_info("=== SEX DETECTION SUMMARY ===")
+  log_info("Configuration: sex_outlier_mode = '{sex_outlier_mode}'")
+  if (sex_outlier_mode == "strict_only") {
+    log_info("  Mode: Only TIER 1 strict mismatches will be removed from downstream analysis")
+    log_info("  TIER 2 threshold-based outliers will be KEPT in the dataset")
+  } else {
+    log_info("  Mode: Both TIER 1 strict mismatches AND TIER 2 threshold-based outliers will be removed")
+  }
   log_info("Strict mismatches (predicted_sex != genetic_sex): {nrow(strict_mismatches)}")
   log_info("Threshold-based outliers (not strict mismatches): {nrow(threshold_outliers)}")
   log_info("Total flagged samples: {nrow(strict_mismatches) + nrow(threshold_outliers)}")
@@ -2699,8 +2712,21 @@ main <- function() {
       fwrite(threshold_outliers_enhanced, sex_outliers_path, sep = "\t")
       log_info("Saved {nrow(threshold_outliers_enhanced)} threshold-based outliers (not strict mismatches) to: {sex_outliers_path}")
 
+      # Check sex outlier mode configuration
+      sex_outlier_mode_enhanced <- tryCatch(
+        config$parameters$outliers$sex_outlier_mode %||% "all",
+        error = function(e) "all"
+      )
+
       # Summary statistics
       log_info("=== SEX DETECTION SUMMARY (Enhanced Models) ===")
+      log_info("Configuration: sex_outlier_mode = '{sex_outlier_mode_enhanced}'")
+      if (sex_outlier_mode_enhanced == "strict_only") {
+        log_info("  Mode: Only TIER 1 strict mismatches will be removed from downstream analysis")
+        log_info("  TIER 2 threshold-based outliers will be KEPT in the dataset")
+      } else {
+        log_info("  Mode: Both TIER 1 strict mismatches AND TIER 2 threshold-based outliers will be removed")
+      }
       log_info("Strict mismatches (predicted_sex != genetic_sex): {nrow(strict_mismatches_enhanced)}")
       log_info("Threshold-based outliers (not strict mismatches): {nrow(threshold_outliers_enhanced)}")
       log_info("Total flagged samples: {nrow(strict_mismatches_enhanced) + nrow(threshold_outliers_enhanced)}")
