@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/compare/v1.4.0...v1.5.0) (2026-02-05)
+
+
+### Features
+
+* **sex_outliers:** add configurable sex outlier handling mode ([2ae29f5](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/commit/2ae29f5365e789558e0c45983d02a2bcc3182df5))
+
 # [1.4.0](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/compare/v1.3.1...v1.4.0) (2026-01-30)
 
 
