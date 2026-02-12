@@ -353,8 +353,8 @@ run_cross_batch_step <- function(step_name, batches, config, dry_run = FALSE) {
   # Set batch context to first batch (scripts will handle cross-batch logic)
   config <- set_batch_context(batches[1], config)
 
-  # Extract step number from step_name
-  step_num_match <- regmatches(step_name, regexpr("^[0-9]{2}", step_name))
+  # Extract step number from step_name (e.g., "07b_cross_batch_harmonisation_kpi" -> "07b")
+  step_num_match <- regmatches(step_name, regexpr("^[0-9]{2}[a-z]?", step_name))
   step_num <- if (length(step_num_match) > 0) step_num_match[1] else "00"
 
   # Set step number in environment

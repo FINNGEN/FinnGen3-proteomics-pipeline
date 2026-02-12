@@ -80,6 +80,7 @@ run_test_*.sh
 run_test_to_normalization.sh
 *_test.sh
 verify_aggregation.sh
+refactored_07b_cross_batch_harmonisation_kpi.R
 
 # OS files
 Thumbs.db

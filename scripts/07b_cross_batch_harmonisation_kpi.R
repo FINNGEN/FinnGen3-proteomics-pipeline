@@ -1857,7 +1857,7 @@ p6_rank1_plot <- ggplot(rank1_long, aes(x = reorder(finngenid, value), y = value
 # Panel 2: Mahalanobis distance scatter
 p6_maha_scatter <- ggplot(maha_scatter_df, aes(x = x, y = y, colour = outlier_flag)) +
   geom_point(size = 2.5, alpha = 0.7) +
-  geom_smooth(method = "lm", se = TRUE, colour = "black", linewidth = 0.8, inherit.aes = FALSE) +
+  geom_smooth(aes(x = x, y = y), method = "lm", se = TRUE, colour = "black", linewidth = 0.8, inherit.aes = FALSE) +
   scale_colour_manual(values = c("FALSE" = col_normal, "TRUE" = col_flagged),
                        labels = c("Normal", "Flagged"),
                        name = "Status") +
@@ -1872,7 +1872,7 @@ p6_maha_scatter <- ggplot(maha_scatter_df, aes(x = x, y = y, colour = outlier_fl
 # Panel 3: MAD-whitened distance scatter
 p6_mad_scatter <- ggplot(mad_scatter_df, aes(x = x, y = y, colour = outlier_flag)) +
   geom_point(size = 2.5, alpha = 0.7) +
-  geom_smooth(method = "lm", se = TRUE, colour = "black", linewidth = 0.8, inherit.aes = FALSE) +
+  geom_smooth(aes(x = x, y = y), method = "lm", se = TRUE, colour = "black", linewidth = 0.8, inherit.aes = FALSE) +
   scale_colour_manual(values = c("FALSE" = col_normal, "TRUE" = col_flagged),
                        labels = c("Normal", "Flagged"),
                        name = "Status") +
