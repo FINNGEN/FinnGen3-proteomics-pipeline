@@ -1,3 +1,10 @@
+## [1.6.1](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/compare/v1.6.0...v1.6.1) (2026-02-12)
+
+
+### Bug Fixes
+
+* fixed isolated bugs in the cross-batch harmonisation KPI evaluation script ([2a9ad03](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/commit/2a9ad032404dad34f3eae98f3263e9555bf85b88))
+
 # [1.6.0](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/compare/v1.5.0...v1.6.0) (2026-02-12)
 
 
