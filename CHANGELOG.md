@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/compare/v1.6.1...v1.7.0) (2026-02-13)
+
+
+### Features
+
+* **07b,07:** KPI dashboard enhancements, bridge sample exclusion, and complete-case PCA ([4b96117](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/commit/4b96117798f8aa3ea0c996e5683f081d308a6f85))
+
 ## [1.6.1](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/compare/v1.6.0...v1.6.1) (2026-02-12)
 
 

@@ -2,7 +2,7 @@
 
 **Platform**: Olink Explore HT (5K)
 
-**Version**: 1.6.1
+**Version**: 1.7.0
 
 **Release Date**: February 2026
 
@@ -977,7 +977,7 @@ echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
 # Pull the image
 docker pull ghcr.io/USERNAME/fg3-olink-pipeline:latest
 
-# Or pull a specific version (e.g., v1.6.1)
+# Or pull a specific version (e.g., v1.7.0)
 docker pull ghcr.io/USERNAME/fg3-olink-pipeline:1.2.1
 
 # Run the pipeline
@@ -1339,7 +1339,7 @@ If you use this pipeline, please cite:
 
 - **Pipeline**: FinnGen 3 Olink Proteomics Analysis Pipeline
 - **Author**: Reza Jabal, PhD (rjabal@broadinstitute.org)
-- **Version**: 1.6.1
+- **Version**: 1.7.0
 - **Release Date**: February 2026
 - **Platform**: Olink Explore HT (5K)
 
