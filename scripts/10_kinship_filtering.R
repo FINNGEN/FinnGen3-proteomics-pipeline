@@ -601,21 +601,48 @@ main <- function() {
   )
 
   # Load data from previous steps using batch-aware paths
+  # Check if batch correction is enabled and batch-corrected data is available
+  adjust_for_batch <- tryCatch(
+    isTRUE(config$parameters$covariate_adjustment$adjust_for_batch),
+    error = function(e) FALSE
+  )
+
   log_info("Loading data from previous steps")
-  phenotype_matrix_path <- get_output_path("09", "phenotype_matrix", batch_id, "phenotypes", config = config)
-  finngenid_matrix_path <- get_output_path("09", "phenotype_matrix_finngenid", batch_id, "phenotypes", config = config)
 
-  if (!file.exists(phenotype_matrix_path)) {
-    stop(paste0("Phenotype matrix not found: ", phenotype_matrix_path, ". Please run step 09 first."))
+  # Try to load batch-corrected data first if batch correction is enabled
+  if (adjust_for_batch && multi_batch_mode) {
+    finngenid_matrix_batch_corrected_path <- get_output_path("09", "phenotype_matrix_finngenid_batch_corrected",
+                                                              batch_id, "phenotypes", config = config)
+    if (file.exists(finngenid_matrix_batch_corrected_path)) {
+      finngenid_matrix <- readRDS(finngenid_matrix_batch_corrected_path)
+      log_info("Loaded BATCH-CORRECTED FINNGENID-indexed matrix: {nrow(finngenid_matrix)} samples x {ncol(finngenid_matrix)} proteins")
+      log_info("Batch correction (adjust_for_batch = true) is enabled - using batch-corrected data")
+      # For batch-corrected data, we don't need the SampleID matrix (use FINNGENID directly)
+      phenotype_matrix <- finngenid_matrix  # Placeholder for consistency
+    } else {
+      log_warn("Batch correction enabled but batch-corrected data not found: {finngenid_matrix_batch_corrected_path}")
+      log_warn("Falling back to non-batch-corrected data")
+      adjust_for_batch <- FALSE  # Reset flag
+    }
   }
 
-  phenotype_matrix <- readRDS(phenotype_matrix_path)
-  finngenid_matrix <- NULL
-  if(file.exists(finngenid_matrix_path)) {
-    finngenid_matrix <- readRDS(finngenid_matrix_path)
-    log_info("Loaded FINNGENID-indexed matrix: {nrow(finngenid_matrix)} samples")
+  # Load regular (non-batch-corrected) data if batch correction is not enabled or not available
+  if (!adjust_for_batch || is.null(finngenid_matrix)) {
+    phenotype_matrix_path <- get_output_path("09", "phenotype_matrix", batch_id, "phenotypes", config = config)
+    finngenid_matrix_path <- get_output_path("09", "phenotype_matrix_finngenid", batch_id, "phenotypes", config = config)
+
+    if (!file.exists(phenotype_matrix_path)) {
+      stop(paste0("Phenotype matrix not found: ", phenotype_matrix_path, ". Please run step 09 first."))
+    }
+
+    phenotype_matrix <- readRDS(phenotype_matrix_path)
+    finngenid_matrix <- NULL
+    if(file.exists(finngenid_matrix_path)) {
+      finngenid_matrix <- readRDS(finngenid_matrix_path)
+      log_info("Loaded FINNGENID-indexed matrix: {nrow(finngenid_matrix)} samples")
+    }
+    log_info("Loaded phenotype matrix: {nrow(phenotype_matrix)} samples x {ncol(phenotype_matrix)} proteins")
   }
-  log_info("Loaded phenotype matrix: {nrow(phenotype_matrix)} samples x {ncol(phenotype_matrix)} proteins")
 
   # Load kinship matrix
   kinship <- load_kinship(config$covariates$kinship_file)
@@ -741,12 +768,22 @@ main <- function() {
   log_info("Saving kinship filtering results")
 
   # Save filtered matrices using batch-aware paths
-  phenotype_unrelated_path <- get_output_path(step_num, "phenotype_matrix_unrelated", batch_id, "phenotypes", config = config)
+  # Use different naming based on whether batch correction was applied
+  if (adjust_for_batch && multi_batch_mode) {
+    # Save batch-corrected kinship-filtered matrices
+    phenotype_unrelated_path <- get_output_path(step_num, "phenotype_matrix_unrelated_batch_corrected", batch_id, "phenotypes", config = config)
+    finngenid_unrelated_path <- get_output_path(step_num, "phenotype_matrix_finngenid_unrelated_batch_corrected", batch_id, "phenotypes", config = config)
+    log_info("Saving BATCH-CORRECTED kinship-filtered matrices")
+  } else {
+    # Save regular kinship-filtered matrices
+    phenotype_unrelated_path <- get_output_path(step_num, "phenotype_matrix_unrelated", batch_id, "phenotypes", config = config)
+    finngenid_unrelated_path <- get_output_path(step_num, "phenotype_matrix_finngenid_unrelated", batch_id, "phenotypes", config = config)
+  }
+
   ensure_output_dir(phenotype_unrelated_path)
   saveRDS(phenotype_unrelated, phenotype_unrelated_path)
 
   if(!is.null(finngenid_unrelated)) {
-    finngenid_unrelated_path <- get_output_path(step_num, "phenotype_matrix_finngenid_unrelated", batch_id, "phenotypes", config = config)
     ensure_output_dir(finngenid_unrelated_path)
     saveRDS(finngenid_unrelated, finngenid_unrelated_path)
   }
@@ -822,10 +859,28 @@ main <- function() {
       log_warn("Could not determine other batch ID for aggregation. Skipping aggregation.")
       aggregate_output <- FALSE
     }
-    batch1_file <- get_output_path(step_num, "phenotype_matrix_finngenid_unrelated", other_batch_id, "phenotypes", config = config)
+
+    # Check for batch-corrected data from other batch first (if batch correction enabled)
+    batch1_file <- NULL
+    if (adjust_for_batch) {
+      batch1_file_batch_corrected <- get_output_path(step_num, "phenotype_matrix_finngenid_unrelated_batch_corrected",
+                                                      other_batch_id, "phenotypes", config = config)
+      if (file.exists(batch1_file_batch_corrected)) {
+        batch1_file <- batch1_file_batch_corrected
+        log_info("Using BATCH-CORRECTED kinship-filtered data from batch 1")
+      }
+    }
+
+    # Fallback to non-batch-corrected data
+    if (is.null(batch1_file)) {
+      batch1_file <- get_output_path(step_num, "phenotype_matrix_finngenid_unrelated", other_batch_id, "phenotypes", config = config)
+    }
 
     if (file.exists(batch1_file)) {
       log_info("Found batch 1 kinship-filtered data: Creating aggregate output")
+      if (adjust_for_batch) {
+        log_info("  Using batch-corrected kinship-filtered data for aggregation")
+      }
 
       # Load batch 1 data
       batch1_unrelated <- readRDS(batch1_file)
@@ -851,8 +906,15 @@ main <- function() {
         aggregate_dir <- file.path(config$output$base_dir, "phenotypes", "aggregate")
         dir.create(aggregate_dir, recursive = TRUE, showWarnings = FALSE)
 
-        aggregate_matrix_path <- file.path(aggregate_dir, "aggregate_phenotype_matrix_finngenid_unrelated.rds")
-        aggregate_samples_path <- file.path(aggregate_dir, "aggregate_samples_unrelated.txt")
+        # Use different naming based on whether batch correction was applied
+        if (adjust_for_batch) {
+          aggregate_matrix_path <- file.path(aggregate_dir, "aggregate_phenotype_matrix_finngenid_unrelated_batch_corrected.rds")
+          aggregate_samples_path <- file.path(aggregate_dir, "aggregate_samples_unrelated_batch_corrected.txt")
+          log_info("Saving BATCH-CORRECTED aggregate kinship-filtered matrix")
+        } else {
+          aggregate_matrix_path <- file.path(aggregate_dir, "aggregate_phenotype_matrix_finngenid_unrelated.rds")
+          aggregate_samples_path <- file.path(aggregate_dir, "aggregate_samples_unrelated.txt")
+        }
 
         saveRDS(aggregate_unrelated, aggregate_matrix_path)
         fwrite(data.table(FINNGENID = rownames(aggregate_unrelated)), aggregate_samples_path, col.names = FALSE)

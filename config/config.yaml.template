@@ -182,6 +182,12 @@ parameters:
     adjust_for_smoking: false
     adjust_for_pcs: false  # Proteomic PCs are never adjusted (preserve biological signal)
     n_pcs_to_adjust: 10  # Not used (proteomic PCs excluded from adjustment)
+    # Batch correction (multi-batch mode only, applied during Step 09 aggregation)
+    # When true, regresses out residual batch effect per protein in the aggregate matrix.
+    # Produces additional batch-corrected per-batch NPX matrices alongside the aggregate.
+    # Only relevant when multi_batch_mode is true and aggregation is enabled.
+    # Default: false (opt-in).
+    adjust_for_batch: false
 
   # Kinship filtering (Step 10)
   kinship_filtering:

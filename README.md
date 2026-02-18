@@ -587,10 +587,20 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
   - Converts outlier SampleIDs to match matrix format
   - Creates FINNGENID-indexed matrices
   - **Multi-Batch Mode**: Merges batch matrices on common proteins
+  - **Optional batch correction** (`adjust_for_batch: true` in config): When enabled in multi-batch mode, regresses out residual batch effect per protein in the aggregate matrix using `lm(npx ~ batch)` residualisation (same pattern as Step 08 covariate adjustment). This addresses residual batch effect identified by Step 07b KPI evaluation. **Batch-corrected data flows through Steps 10-11**, ensuring final rank-normalized output is batch-corrected. Produces:
+    - Batch-corrected aggregate matrix and PLINK/long formats
+    - Per-batch batch-corrected FINNGENID matrices (input to Step 10)
+    - Batch R² diagnostics TSV (per-protein R² before correction)
 - **Output**:
   - `09_phenotype_matrix.rds`: SampleID-indexed phenotype matrix (outliers removed)
   - `09_phenotype_matrix_finngenid.rds`: FINNGENID-indexed phenotype matrix
   - `09_all_outliers_removed.tsv`: Combined outlier list with FINNGENIDs
+  - (Multi-batch, `adjust_for_batch: true`):
+    - `aggregate_phenotype_matrix_batch_corrected.rds`: Batch-corrected aggregate (pre-kinship filtering)
+    - `09_phenotype_matrix_finngenid_batch_corrected_{batch}.rds`: Per-batch batch-corrected FINNGENID matrices (→ Step 10 input)
+    - `aggregate_batch_r2_diagnostics.tsv`: Per-protein batch R² before correction
+    - `aggregate_phenotypes_batch_corrected_plink.txt`: PLINK format (batch-corrected, pre-kinship)
+    - `aggregate_phenotypes_batch_corrected_long.txt`: Long format (batch-corrected, pre-kinship)
 
 #### 10_kinship_filtering.R
 - **Purpose**: Remove related individuals and select best sample per person
@@ -603,11 +613,16 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
     3. Lower SD NPX (more consistent measurements, tie-breaker 2)
     4. Lexicographic SampleID order (deterministic final tie-breaker)
   - Uses quality metrics from Step 05d comprehensive QC data when available
+- **Batch Correction Integration**: When `adjust_for_batch: true`, automatically loads and processes batch-corrected data from Step 09
 - **Output Consistency**: Ensures SampleID and FINNGENID matrices have matching dimensions (one sample per person)
 - **Note**: The QCed set of samples has **not** been kinship filtered by default. Related individuals (e.g., sample duplicates, siblings, parent-offspring pairs) may be present. Users requiring unrelated samples should apply kinship filtering separately.
 - **Output**:
   - `10_phenotype_matrix_unrelated.rds`: Unrelated samples matrix (SampleID-indexed, one per FINNGENID)
   - `10_phenotype_matrix_finngenid_unrelated.rds`: Unrelated samples matrix (FINNGENID-indexed)
+  - (Multi-batch, `adjust_for_batch: true`):
+    - `10_phenotype_matrix_finngenid_unrelated_batch_corrected_{batch}.rds`: Batch-corrected kinship-filtered per-batch matrices
+    - `aggregate_phenotype_matrix_finngenid_unrelated_batch_corrected.rds`: Batch-corrected kinship-filtered aggregate
+    - `aggregate_samples_unrelated_batch_corrected.txt`: Sample list for batch-corrected aggregate
   - `10_relationship_summary.tsv`: Relationship statistics
   - `10_samples_unrelated.txt`: List of unrelated sample IDs
 
@@ -617,10 +632,15 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
   - Column-wise normalisation per protein
   - Distribution comparison before/after
   - PLINK format output
+- **Batch Correction Integration**: When `adjust_for_batch: true`, Step 11 looks for Step 10 outputs with the `_batch_corrected` suffix and uses the FINNGENID-indexed kinship-filtered matrix as the primary data source, then applies inverse rank normalisation and writes aggregate outputs with the `_batch_corrected` suffix.
 - **Output**:
   - `11_phenotype_matrix_rint.rds`: Rank-normalised matrix
   - `11_phenotype_matrix_rint.pheno`: PLINK format phenotype file
   - `11_proteins_all.txt`: Protein list for analysis
+  - (Multi-batch, `adjust_for_batch: true`):
+    - `aggregate_phenotype_matrix_rank_normalized_batch_corrected.rds`: **Final output: batch-corrected + kinship-filtered + rank-normalized**
+    - `aggregate_phenotypes_rank_normalized_batch_corrected_plink.txt`: PLINK format (ready for pQTL analysis)
+    - `aggregate_proteins_rank_normalized_batch_corrected_index.txt`: Protein index for PLINK analysis
 
 ## Sample Flow Summary
 
@@ -769,22 +789,94 @@ Phase 3: Cross-Batch Normalisation (Step 07)
 Phase 3.5: Per-Batch Steps 06, 08 (run for each batch)
          │
          ▼
-Phase 4: Steps 09-11 (per-batch + aggregation)
+Phase 4: Steps 09-11 (execution strategy depends on batch correction)
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ For each batch: batch_01, batch_02                                         │
-│   Step 09 → Step 10 → Step 11 (same as single-batch)                       │
+│ WITHOUT batch correction (adjust_for_batch = false):                       │
+│   For each batch: batch_01, batch_02                                       │
+│     Step 09 → Step 10 → Step 11 (same as single-batch)                     │
 │                                                                            │
-│ AGGREGATION (when second batch completes):                                 │
+│   AGGREGATION (when second batch completes):                               │
+│     - Merge batch outputs in Steps 09, 10, 11                              │
+│     - Create aggregate_phenotype_matrix_*.rds files                         │
+│                                                                            │
+│ WITH batch correction (adjust_for_batch = true):                           │
+│   PHASED EXECUTION to ensure batch-corrected data flows correctly:         │
+│                                                                            │
+│   Phase 4.1: Step 09 for ALL batches (batch_01, batch_02)                  │
+│     - Each batch prepares phenotypes                                        │
+│     - Second batch creates batch-corrected aggregate matrix                 │
+│     - Saves batch-corrected per-batch FINNGENID matrices for Step 10       │
+│                                                                            │
+│   Phase 4.2: Step 10 for ALL batches (batch_01, batch_02)                  │
+│     - Each batch loads batch-corrected data from Step 09                    │
+│     - Applies kinship filtering                                            │
+│     - Saves batch-corrected unrelated matrices for Step 11                  │
+│                                                                            │
+│   Phase 4.3: Step 11 for ALL batches (batch_01, batch_02)                  │
+│     - Each batch loads batch-corrected kinship-filtered data                │
+│     - Applies rank normalization                                           │
+│     - Creates final batch-corrected aggregate outputs                       │
+└────────────────────────────────────────────────────────────────────────────┘
 │   ├── Load both batch matrices                                             │
 │   ├── Find common proteins (5,416)                                         │
 │   ├── Find common FINNGENIDs (bridge samples: ~31)                         │
 │   ├── Use batch_02 data for common FINNGENIDs (reference batch)            │
-│   └── Merge: batch_01 + batch_02 = aggregate (3,714 samples)               │
+│   └── Merge: batch_01 + batch_02 = aggregate (4,317 samples)               │
 │                                                                            │
-│ Aggregate output: output/phenotypes/aggregate/                             │
+│ OPTIONAL BATCH CORRECTION (adjust_for_batch: true):                        │
+│   ├── Step 09: Per-protein lm(npx ~ batch) residualisation on aggregate    │
+│   │   ├── Save batch-corrected aggregate matrix                            │
+│   │   ├── Split back into per-batch FINNGENID matrices                     │
+│   │   └── Save batch R² diagnostics (per-protein)                          │
+│   │                                                                         │
+│   ├── Step 10: Kinship filtering on batch-corrected data                   │
+│   │   ├── Load batch-corrected per-batch matrices from Step 09             │
+│   │   ├── Apply kinship filtering (3rd degree threshold)                   │
+│   │   ├── Save batch-corrected kinship-filtered per-batch matrices         │
+│   │   └── Aggregate: batch-corrected + kinship-filtered                    │
+│   │                                                                         │
+│   └── Step 11: Rank normalization on batch-corrected kinship-filtered data │
+│       ├── Load batch-corrected kinship-filtered data from Step 10          │
+│       ├── Apply inverse rank normalization per protein                     │
+│       └── Save: batch-corrected + kinship-filtered + rank-normalized       │
+│                                                                            │
+│ DATA FLOW WITH BATCH CORRECTION (adjust_for_batch: true):                  │
+│   Step 09 aggregate (4,317 samples)                                        │
+│      ↓ batch correction (regress batch)                                    │
+│   Step 09 batch-corrected aggregate (4,317 samples)                        │
+│      ↓ split → per-batch matrices                                          │
+│   Step 10 kinship filtering                                                │
+│      ↓ remove related individuals                                          │
+│   Step 10 batch-corrected unrelated aggregate (~3,200 samples)             │
+│      ↓                                                                      │
+│   Step 11 rank normalization                                               │
+│      ↓                                                                      │
+│   Final: batch-corrected + kinship-filtered + rank-normalized              │
+│                                                                            │
+│ Aggregate output files: output/phenotypes/aggregate/                       │
+│                                                                            │
+│ WITHOUT batch correction (adjust_for_batch: false, default):               │
+│   aggregate_phenotype_matrix.rds                                           │
 │   aggregate_phenotype_matrix_finngenid_unrelated.rds                       │
 │   aggregate_phenotype_matrix_rank_normalized.rds                           │
+│   aggregate_phenotypes_rank_normalized_plink.txt                           │
 │   aggregate_samples_unrelated.txt                                          │
+│                                                                            │
+│ WITH batch correction (adjust_for_batch: true):                            │
+│   aggregate_phenotype_matrix_batch_corrected.rds (Step 09, pre-kinship)    │
+│   aggregate_phenotypes_batch_corrected_plink.txt (Step 09, pre-kinship)    │
+│   aggregate_phenotypes_batch_corrected_long.txt (Step 09, pre-kinship)     │
+│   aggregate_batch_r2_diagnostics.tsv (per-protein batch R²)                │
+│   09_phenotype_matrix_finngenid_batch_corrected_{batch}.rds (per-batch)    │
+│   aggregate_phenotype_matrix_finngenid_unrelated_batch_corrected.rds       │
+│   aggregate_samples_unrelated_batch_corrected.txt                          │
+│   aggregate_phenotype_matrix_rank_normalized_batch_corrected.rds           │
+│   aggregate_phenotypes_rank_normalized_batch_corrected_plink.txt           │
+│   aggregate_proteins_rank_normalized_batch_corrected_index.txt             │
+│                                                                            │
+│ NOTE: When batch correction is enabled, all downstream steps (10, 11)      │
+│ automatically use batch-corrected data, ensuring the final rank-normalized │
+│ output is batch-corrected. The '_batch_corrected' suffix tracks this.      │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -802,11 +894,36 @@ Phase 4: Steps 09-11 (per-batch + aggregation)
 
 3. **Bridge Sample Handling**:
    - Bridge samples (FINNGENIDs in both batches) are included in per-batch processing
+   - During aggregation, batch 2 data is used for common samples (batch 2 is reference)
+   - This avoids duplicates while retaining maximum sample size
+
+4. **Batch Correction Data Flow** (when `adjust_for_batch = true`):
+   - **Phased Execution**: Steps 09-11 execute step-by-step across all batches (not batch-by-batch)
+   - **Phase 4.1** (Step 09 for all batches): Creates batch-corrected per-batch FINNGENID matrices
+   - **Phase 4.2** (Step 10 for all batches): Loads batch-corrected data, applies kinship filtering
+   - **Phase 4.3** (Step 11 for all batches): Loads batch-corrected kinship-filtered data, rank normalizes
+   - **Purpose**: Ensures batch-corrected matrices from Step 09 are available before Step 10 runs
+   - **Without this**: Race condition where Batch 1 finishes Step 10 before Batch 2 creates batch-corrected data
    - During aggregation, batch_02 data is used for common FINNGENIDs (reference batch)
 
 4. **FINNGENID vs SampleID**:
    - Steps 00-08: Use SampleID (original format)
    - Steps 09-11: Convert to FINNGENID (required for GWAS)
+
+5. **Batch Correction Data Flow** (when `adjust_for_batch: true`):
+   - **Step 09**: Batch correction applied to aggregate matrix via per-protein linear regression (`lm(npx ~ batch)`)
+     - Residuals are computed and added back to protein means (preserves protein-level scale)
+     - Batch-corrected aggregate is split back into per-batch FINNGENID matrices
+     - These per-batch batch-corrected matrices serve as input to Step 10
+   - **Step 10**: Kinship filtering automatically detects and loads batch-corrected data
+     - Applies kinship filtering to batch-corrected per-batch matrices
+     - Saves batch-corrected kinship-filtered outputs with `_batch_corrected` suffix
+     - Aggregates batch-corrected kinship-filtered data from both batches
+   - **Step 11**: Rank normalization automatically detects and loads batch-corrected kinship-filtered data
+     - Applies inverse rank normalization to batch-corrected kinship-filtered data
+     - Saves final output with `_batch_corrected` suffix
+   - **Result**: Final rank-normalized aggregate output is batch-corrected + kinship-filtered + rank-normalized
+   - **File naming**: All outputs use `_batch_corrected` suffix to track batch correction status through the pipeline
 
 ## Protein QC
 
@@ -1178,9 +1295,16 @@ parameters:
       - sex
       # - bmi      # Uncomment to include BMI
       # - smoking  # Uncomment to include smoking
+    # Batch correction (multi-batch mode only, applied during Step 09 aggregation)
+    # Regresses out residual batch effect per protein after combining batches.
+    # Produces additional batch-corrected aggregate and per-batch NPX matrices.
+    # Default: false (opt-in). Only relevant when multi_batch_mode = true.
+    adjust_for_batch: false  # Set to true to correct for residual batch effect
 ```
 
 **Note**: Proteomic PCs (pPC1-10) are never adjusted for to preserve biological signal. They are evaluated and visualised but not removed from the data.
+
+**Note**: When `adjust_for_batch: true` is set and multi-batch mode is enabled, Step 09 performs an additional per-protein linear regression (`lm(npx ~ batch)`) on the combined aggregate matrix. The residuals (plus protein mean) replace the original values, removing the linear batch effect. This produces batch-corrected aggregate and per-batch matrices alongside the uncorrected outputs. A diagnostics file (`aggregate_batch_r2_diagnostics.tsv`) reports the per-protein batch R² before correction.
 
 ### Running Multi-Batch Pipeline
 

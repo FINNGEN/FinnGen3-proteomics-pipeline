@@ -401,6 +401,59 @@ create_sample_lists <- function(phenotype_result, outlier_result) {
   return(sample_lists)
 }
 
+# ==============================================================================
+# Batch correction: regress out residual batch effect per protein
+# Applied post-aggregation when adjust_for_batch = true in config.
+# Same residualisation pattern as adjust_covariates_lm in Step 08:
+#   adjusted_value = residual(lm(npx ~ batch)) + protein_mean
+# ==============================================================================
+adjust_for_batch_effect <- function(aggregate_matrix, batch_indicator) {
+  stopifnot(is.factor(batch_indicator) || is.character(batch_indicator))
+  stopifnot(length(batch_indicator) == nrow(aggregate_matrix))
+  batch_factor <- as.integer(as.factor(batch_indicator))  # 1/2 numeric coding
+
+  n_proteins <- ncol(aggregate_matrix)
+  adjusted <- aggregate_matrix  # copy
+
+  n_adjusted <- 0L
+  n_skipped  <- 0L
+  r2_before  <- numeric(n_proteins)
+
+  for (i in seq_len(n_proteins)) {
+    y <- aggregate_matrix[, i]
+    ok <- !is.na(y)
+    n_ok <- sum(ok)
+
+    if (n_ok < 50 || length(unique(batch_factor[ok])) < 2) {
+      n_skipped <- n_skipped + 1L
+      r2_before[i] <- NA_real_
+      next
+    }
+
+    # Compute R² before correction for diagnostics
+    fit <- lm(y[ok] ~ batch_factor[ok])
+    ss_res <- sum(fit$residuals^2)
+    ss_tot <- sum((y[ok] - mean(y[ok]))^2)
+    r2_before[i] <- if (ss_tot > 0) 1 - ss_res / ss_tot else 0
+
+    # Residualise: adjusted = residual + global mean (preserves protein-level scale)
+    adjusted[ok, i] <- fit$residuals + mean(y[ok])
+    n_adjusted <- n_adjusted + 1L
+  }
+
+  median_r2 <- median(r2_before, na.rm = TRUE)
+  max_r2    <- max(r2_before, na.rm = TRUE)
+  log_info("Batch correction summary: adjusted {n_adjusted} proteins, skipped {n_skipped}")
+  log_info("  Batch R² before correction: median = {round(median_r2, 4)}, max = {round(max_r2, 4)}")
+
+  list(
+    adjusted_matrix = adjusted,
+    r2_before       = r2_before,
+    n_adjusted      = n_adjusted,
+    n_skipped       = n_skipped
+  )
+}
+
 # Function to merge batch matrices on FINNGENID (common proteins only)
 # NOTE: Input matrices are expected to already have FINNGENIDs as rownames
 merge_batch_matrices <- function(batch1_matrix, batch2_matrix, batch1_mapping = NULL, batch2_mapping = NULL) {
@@ -440,11 +493,14 @@ merge_batch_matrices <- function(batch1_matrix, batch2_matrix, batch1_mapping = 
     log_info("  Batch 1 after removing common: {nrow(batch1_finngen)} samples")
   }
 
-  # Combine matrices
+  # Combine matrices and track batch origin
   aggregate_matrix <- rbind(batch1_finngen, batch2_finngen)
+  batch_labels <- c(rep("batch1", nrow(batch1_finngen)),
+                    rep("batch2", nrow(batch2_finngen)))
+  names(batch_labels) <- rownames(aggregate_matrix)
   log_info("Aggregate matrix: {nrow(aggregate_matrix)} samples x {ncol(aggregate_matrix)} proteins")
 
-  return(aggregate_matrix)
+  return(list(matrix = aggregate_matrix, batch_labels = batch_labels))
 }
 
 # Main execution
@@ -624,15 +680,18 @@ main <- function() {
       batch1_matrix <- readRDS(batch1_file)
       batch1_mapping <- readRDS(batch1_mapping_file)
 
-      # Merge matrices
-      aggregate_matrix <- merge_batch_matrices(
+      # Merge matrices (returns list with $matrix and $batch_labels)
+      merge_result <- merge_batch_matrices(
         batch1_matrix,
         phenotype_result$finngenid_matrix,
         batch1_mapping,
         sample_mapping
       )
 
-      if (!is.null(aggregate_matrix)) {
+      if (!is.null(merge_result)) {
+        aggregate_matrix <- merge_result$matrix
+        batch_labels     <- merge_result$batch_labels
+
         # Create aggregate phenotype info
         aggregate_pheno_info <- create_phenotype_info(aggregate_matrix)
 
@@ -654,6 +713,73 @@ main <- function() {
                file.path(aggregate_dir, "aggregate_finngenids_qc_pass.txt"), col.names = FALSE)
 
         log_info("Aggregate outputs saved: {nrow(aggregate_matrix)} samples x {ncol(aggregate_matrix)} proteins")
+
+        # ----------------------------------------------------------------
+        # Optional: Batch correction (regress out residual batch effect)
+        # Only applies when adjust_for_batch = true and multi_batch_mode = true.
+        # ----------------------------------------------------------------
+        adjust_for_batch <- tryCatch(
+          isTRUE(config$parameters$covariate_adjustment$adjust_for_batch),
+          error = function(e) FALSE
+        )
+
+        if (adjust_for_batch) {
+          log_info("=== BATCH CORRECTION (adjust_for_batch = true) ===")
+          log_info("Regressing out residual batch effect per protein in the aggregate matrix")
+
+          batch_result <- adjust_for_batch_effect(aggregate_matrix, batch_labels)
+          aggregate_batch_adj <- batch_result$adjusted_matrix
+
+          # Save batch-corrected aggregate matrix
+          saveRDS(aggregate_batch_adj,
+                  file.path(aggregate_dir, "aggregate_phenotype_matrix_batch_corrected.rds"))
+          log_info("Saved batch-corrected aggregate matrix: {nrow(aggregate_batch_adj)} x {ncol(aggregate_batch_adj)}")
+
+          # Save batch R² diagnostics
+          r2_diag <- data.table(
+            protein   = colnames(aggregate_matrix),
+            r2_batch  = batch_result$r2_before
+          )
+          fwrite(r2_diag, file.path(aggregate_dir, "aggregate_batch_r2_diagnostics.tsv"), sep = "\t")
+          log_info("Saved batch R² diagnostics: {file.path(aggregate_dir, 'aggregate_batch_r2_diagnostics.tsv')}")
+
+          # Save batch-corrected per-batch NPX matrices (FINNGENID-indexed)
+          # Split the batch-corrected aggregate back into individual batches.
+          # These will be used by Step 10 (kinship filtering) when batch correction is enabled.
+          is_batch1 <- batch_labels == "batch1"
+          is_batch2 <- batch_labels == "batch2"
+
+          batch1_adj <- aggregate_batch_adj[is_batch1, , drop = FALSE]
+          batch2_adj <- aggregate_batch_adj[is_batch2, , drop = FALSE]
+
+          # Save as FINNGENID matrices (for Step 10 input)
+          batch1_adj_finngenid_path <- get_output_path(step_num, "phenotype_matrix_finngenid_batch_corrected",
+                                                       other_batch_id, "phenotypes", config = config)
+          batch2_adj_finngenid_path <- get_output_path(step_num, "phenotype_matrix_finngenid_batch_corrected",
+                                                       batch_id, "phenotypes", config = config)
+          ensure_output_dir(batch1_adj_finngenid_path)
+          ensure_output_dir(batch2_adj_finngenid_path)
+
+          saveRDS(batch1_adj, batch1_adj_finngenid_path)
+          saveRDS(batch2_adj, batch2_adj_finngenid_path)
+          log_info("Saved batch-corrected per-batch FINNGENID matrices (for Step 10 input):")
+          log_info("  {other_batch_id}: {nrow(batch1_adj)} samples -> {batch1_adj_finngenid_path}")
+          log_info("  {batch_id}: {nrow(batch2_adj)} samples -> {batch2_adj_finngenid_path}")
+
+          # Also save batch-corrected aggregate in PLINK and long formats
+          aggregate_adj_plink <- format_phenotypes(aggregate_batch_adj, format = "plink")
+          aggregate_adj_long  <- format_phenotypes(aggregate_batch_adj, format = "long")
+          fwrite(aggregate_adj_plink,
+                 file.path(aggregate_dir, "aggregate_phenotypes_batch_corrected_plink.txt"),
+                 sep = "\t", na = "-9")
+          fwrite(aggregate_adj_long,
+                 file.path(aggregate_dir, "aggregate_phenotypes_batch_corrected_long.txt"),
+                 sep = "\t")
+          log_info("Saved batch-corrected aggregate PLINK and long format files")
+          log_info("=== BATCH CORRECTION COMPLETE ===")
+        } else {
+          log_info("Batch correction not requested (adjust_for_batch = false or not set)")
+        }
       } else {
         log_warn("Failed to create aggregate matrix")
       }

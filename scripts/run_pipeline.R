@@ -449,6 +449,11 @@ main <- function() {
     error = function(e) FALSE
   )
 
+  adjust_for_batch <- tryCatch(
+    isTRUE(config$parameters$covariate_adjustment$adjust_for_batch),
+    error = function(e) FALSE
+  )
+
   # Get batches to process
   batches <- get_batches_to_process(config, args$batch)
 
@@ -472,6 +477,9 @@ main <- function() {
   cat("Steps to run:", paste(steps_to_run, collapse = ", "), "\n")
   if (aggregate_output && multi_batch_mode) {
     cat("Aggregation enabled: Steps 09-11 will create aggregate outputs\n")
+    if (adjust_for_batch) {
+      cat("Batch correction enabled: Steps 09-11 will use phased execution to ensure batch-corrected data flows correctly\n")
+    }
   }
   if (isTRUE(args$dry_run)) {
     cat("DRY RUN MODE - No actual execution\n")
@@ -483,6 +491,9 @@ main <- function() {
   log_info("Steps to run: {paste(steps_to_run, collapse=', ')}")
   if (aggregate_output && multi_batch_mode) {
     log_info("Aggregation enabled: Steps 09-11 will create aggregate outputs")
+    if (adjust_for_batch) {
+      log_info("Batch correction enabled: Steps 09-11 will use phased execution")
+    }
   }
   if (isTRUE(args$dry_run)) {
     log_info("DRY RUN MODE - No actual execution")
@@ -629,37 +640,80 @@ main <- function() {
     }
 
     # Phase 4: Steps 09-11 (phenotype preparation, kinship filtering, rank normalization)
-    # CRITICAL FIX: Always run per-batch first, then scripts handle aggregation internally
-    # When aggregate_output=true, scripts will automatically aggregate after processing their batch
+    # CRITICAL: Execution strategy depends on whether batch correction is enabled
+    #
+    # WITHOUT batch correction (adjust_for_batch = false):
+    #   - Run per-batch through all steps (Batch1: 09→10→11, Batch2: 09→10→11)
+    #   - Scripts handle aggregation internally after each batch
+    #
+    # WITH batch correction (adjust_for_batch = true):
+    #   - Run step-by-step across all batches (All: 09, then All: 10, then All: 11)
+    #   - This ensures batch-corrected matrices from Step 09 are available before Step 10 runs
+    #   - Prevents race condition where Batch1 finishes Step 10 before Batch2 creates batch-corrected data
     aggregation_steps_to_run <- intersect(steps_to_run, aggregation_steps)
     if (length(aggregation_steps_to_run) > 0) {
-    if (aggregate_output) {
-        phase4_msg <- paste0("\nPhase 4: Running steps 09-11 per-batch (scripts will aggregate outputs)\n")
+      if (aggregate_output && adjust_for_batch) {
+        # PHASED EXECUTION (batch correction enabled)
+        phase4_msg <- paste0("\nPhase 4: Running steps 09-11 with PHASED execution (batch correction enabled)\n")
         cat(phase4_msg)
-        log_info("Phase 4: Running steps 09-11 per-batch (scripts will aggregate outputs)")
-        log_info("  Scripts detect aggregate_output=true and merge batch outputs internally")
-    } else {
-        phase4_msg <- paste0("\nPhase 4: Processing batches through steps 09-11 (no aggregation)\n")
-        cat(phase4_msg)
-        log_info("Phase 4: Processing batches through steps 09-11 (no aggregation)")
-      }
+        log_info("Phase 4: Running steps 09-11 with PHASED execution (batch correction enabled)")
+        log_info("  Execution order: All batches complete Step 09 → All batches complete Step 10 → All batches complete Step 11")
+        log_info("  This ensures batch-corrected data from Step 09 flows correctly to Steps 10-11")
 
-        for (batch_id in batches) {
-          for (step in aggregation_steps_to_run) {
+        # Execute step-by-step across all batches
+        for (step in aggregation_steps_to_run) {
+          cat(paste0("\n--- Phase 4.", match(step, aggregation_steps_to_run), ": Running ", step, " for all batches ---\n"))
+          log_info("Running {step} for all batches")
+
+          for (batch_id in batches) {
             success <- run_step_for_batch(step, batch_id, config, isTRUE(args$dry_run))
             if (success) {
-            if (!batch_id %in% names(batch_results)) {
-              batch_results[[batch_id]] <- list(success = 0, failed = character())
-            }
+              if (!batch_id %in% names(batch_results)) {
+                batch_results[[batch_id]] <- list(success = 0, failed = character())
+              }
               batch_results[[batch_id]]$success <- batch_results[[batch_id]]$success + 1
               success_count <- success_count + 1
             } else {
               failed_step <- paste0(step, " (", batch_id, ")")
-            if (!batch_id %in% names(batch_results)) {
-              batch_results[[batch_id]] <- list(success = 0, failed = character())
+              if (!batch_id %in% names(batch_results)) {
+                batch_results[[batch_id]] <- list(success = 0, failed = character())
+              }
+              batch_results[[batch_id]]$failed <- c(batch_results[[batch_id]]$failed, step)
+              failed_steps <- c(failed_steps, failed_step)
             }
-            batch_results[[batch_id]]$failed <- c(batch_results[[batch_id]]$failed, step)
-            failed_steps <- c(failed_steps, failed_step)
+          }
+        }
+      } else {
+        # PER-BATCH EXECUTION (no batch correction, or no aggregation)
+        if (aggregate_output) {
+          phase4_msg <- paste0("\nPhase 4: Running steps 09-11 per-batch (scripts will aggregate outputs)\n")
+          cat(phase4_msg)
+          log_info("Phase 4: Running steps 09-11 per-batch (scripts will aggregate outputs)")
+          log_info("  Scripts detect aggregate_output=true and merge batch outputs internally")
+        } else {
+          phase4_msg <- paste0("\nPhase 4: Processing batches through steps 09-11 (no aggregation)\n")
+          cat(phase4_msg)
+          log_info("Phase 4: Processing batches through steps 09-11 (no aggregation)")
+        }
+
+        # Execute per-batch through all steps
+        for (batch_id in batches) {
+          for (step in aggregation_steps_to_run) {
+            success <- run_step_for_batch(step, batch_id, config, isTRUE(args$dry_run))
+            if (success) {
+              if (!batch_id %in% names(batch_results)) {
+                batch_results[[batch_id]] <- list(success = 0, failed = character())
+              }
+              batch_results[[batch_id]]$success <- batch_results[[batch_id]]$success + 1
+              success_count <- success_count + 1
+            } else {
+              failed_step <- paste0(step, " (", batch_id, ")")
+              if (!batch_id %in% names(batch_results)) {
+                batch_results[[batch_id]] <- list(success = 0, failed = character())
+              }
+              batch_results[[batch_id]]$failed <- c(batch_results[[batch_id]]$failed, step)
+              failed_steps <- c(failed_steps, failed_step)
+            }
           }
         }
       }

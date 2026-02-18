@@ -324,17 +324,23 @@ sids_b2 <- bridge_sid_b2$SampleID
 log_info("Aligned bridge pairs: {n_bridge}")
 
 # --- Configurable bridge sample exclusion ---
-exclude_sids <- tryCatch(
+# The user may supply either FINNGENIDs or SampleIDs in the config list.
+# Match against common_bridge_fg (FINNGENIDs) AND sids_b1/sids_b2 (SampleIDs)
+# so that exclusion works regardless of identifier type.
+exclude_ids <- tryCatch(
   config$parameters$bridge_normalization$exclude_bridge_sample_ids,
   error = function(e) NULL) %||% character(0)
-if (length(exclude_sids) > 0) {
-  log_info("Excluding {length(exclude_sids)} bridge sample IDs from config: {paste(exclude_sids, collapse=', ')}")
-  keep <- !(sids_b1 %in% exclude_sids) & !(sids_b2 %in% exclude_sids)
+if (length(exclude_ids) > 0) {
+  log_info("Excluding {length(exclude_ids)} bridge IDs from config: {paste(exclude_ids, collapse=', ')}")
+  keep <- !(common_bridge_fg %in% exclude_ids) &
+          !(sids_b1 %in% exclude_ids) &
+          !(sids_b2 %in% exclude_ids)
+  n_before <- n_bridge
   common_bridge_fg <- common_bridge_fg[keep]
   sids_b1 <- sids_b1[keep]
   sids_b2 <- sids_b2[keep]
   n_bridge <- length(common_bridge_fg)
-  log_info("Bridge pairs after exclusion: {n_bridge}")
+  log_info("Bridge pairs after exclusion: {n_bridge} (removed {n_before - n_bridge})")
   stopifnot_msg(n_bridge >= 3, "Too few bridge pairs remaining after exclusion.")
 }
 
@@ -680,6 +686,17 @@ build_cohort <- function(pc_b1, pc_b2, bid1, bid2) {
 
 cohort_pre  <- build_cohort(pc_pre_b1,  pc_pre_b2,  batch1_id, batch2_id)
 cohort_post <- build_cohort(pc_post_b1, pc_post_b2, batch1_id, batch2_id)
+
+# Post-harmonisation PCA basis (for Page 5 right panel and variance-explained plot)
+pca_basis_post <- build_fixed_pca(post_b1, post_b2, common_proteins,
+                                  max_pcs = kpi_max_pcs, var_threshold = kpi_var_threshold,
+                                  impute_max_frac = pca_impute_max_frac,
+                                  min_complete_rows = pca_min_complete_rows)
+proj_post_space_b1  <- project_onto_basis(post_b1, pca_basis_post, impute_max_frac = pca_impute_max_frac)
+proj_post_space_b2  <- project_onto_basis(post_b2, pca_basis_post, impute_max_frac = pca_impute_max_frac)
+pc_post_space_b1    <- proj_post_space_b1$scores
+pc_post_space_b2    <- proj_post_space_b2$scores
+cohort_post_space   <- build_cohort(pc_post_space_b1, pc_post_space_b2, batch1_id, batch2_id)
 
 compute_silhouette <- function(scores, labels) {
   X <- scores[, 1:2, drop = FALSE]
@@ -1465,21 +1482,20 @@ if (!is.null(var_decomp_pre) && !is.null(var_decomp_post)) {
                               pmin(vd_summary$median_pct - 0.02, 0.88),
                               pmin(vd_summary$median_pct + 0.04, 0.92))
 
-  # Jitter high-variance points so they and their annotations don't overlap
+  # Jitter high-variance points so they and their annotations don't overlap.
+  # NOTE: ggboxplot creates a discrete x-axis, so jitter must stay compatible
+  # with the factor scale. We jitter y only and use position_jitter for x nudge
+  # inside the geom calls, with a fixed seed for reproducibility.
   if (nrow(vd_high_var) > 0) {
-    vd_high_var$aligned_x <- as.numeric(vd_high_var$component)
-    vd_high_var$aligned_y <- vd_high_var$fraction
     set.seed(40721)
-    jitter_x_amount <- 0.18
     jitter_y_amount <- 0.025
-    vd_high_var$jitter_x <- vd_high_var$aligned_x + runif(nrow(vd_high_var), -jitter_x_amount, jitter_x_amount)
-    vd_high_var$jitter_y <- vd_high_var$aligned_y + runif(nrow(vd_high_var), -jitter_y_amount, jitter_y_amount)
+    vd_high_var$jitter_y <- vd_high_var$fraction + runif(nrow(vd_high_var), -jitter_y_amount, jitter_y_amount)
     vd_high_var$jitter_y <- pmax(0.01, pmin(0.99, vd_high_var$jitter_y))
   }
 
   # Build subtitle
   vd_subtitle_base <- paste0(
-    "ANOVA decomposition of NPX ~ batch + sex per protein. Batch variance should decrease post-harmonisation;\n",
+    "ANOVA decomposition of NPX ~ batch + sex per protein (200 proteins sampled randomly). Batch variance should decrease post-harmonisation;\n",
     "sex variance should remain stable (drop > 20% signals over-correction). Red triangles = > 30% variance.\n")
   if (length(high_var_proteins_vd) > 0) {
     hv_text <- paste(head(high_var_proteins_vd, 10), collapse = ", ")
@@ -1499,20 +1515,23 @@ if (!is.null(var_decomp_pre) && !is.null(var_decomp_post)) {
               position = position_dodge(width = 0.75), size = 3.5, fontface = "bold",
               vjust = -0.3) +
     {if (nrow(vd_high_var) > 0) {
-      geom_point(data = vd_high_var, aes(x = jitter_x, y = jitter_y),
+      geom_point(data = vd_high_var, aes(x = component, y = jitter_y),
+                 position = position_jitter(width = 0.18, height = 0, seed = 40721),
                  shape = 17, size = 3.5, colour = "#FF0000", alpha = 0.9)
     } else geom_blank()} +
     {if (nrow(vd_high_var) > 0 && requireNamespace("ggrepel", quietly = TRUE)) {
       ggrepel::geom_text_repel(data = vd_high_var,
-                               aes(x = jitter_x, y = jitter_y, label = protein),
+                               aes(x = component, y = jitter_y, label = protein),
+                               position = position_jitter(width = 0.18, height = 0, seed = 40721),
                                size = 2.5, colour = "grey30", fontface = "bold",
                                min.segment.length = 0, box.padding = 0.3,
                                point.padding = 0.2, max.overlaps = Inf, force = 2)
     } else if (nrow(vd_high_var) > 0) {
       geom_text(data = vd_high_var,
-                aes(x = jitter_x, y = jitter_y + 0.05, label = protein),
+                aes(x = component, y = jitter_y + 0.05, label = protein),
+                position = position_jitter(width = 0.18, height = 0, seed = 40721),
                 size = 2.5, hjust = 0, vjust = 0, angle = 45, colour = "grey30",
-                fontface = "bold", nudge_y = 0.02)
+                fontface = "bold")
     } else geom_blank()} +
     scale_y_continuous(labels = scales::percent_format()) +
     coord_cartesian(ylim = c(0, 1.0)) +
@@ -1602,6 +1621,134 @@ p_pca <- ggplot(pca_plot_df[!pca_plot_df$bridge, ], aes(x = PC1, y = PC2, colour
          sprintf("Shorter connectors post-harmonisation indicate improved alignment. PCs retained: %d",
                  pca_basis$n_pcs))) +
   theme(legend.position = "bottom")
+
+# Page 5: Left = pre, Right = post (same convention as plot B: triangles, connectors;
+# flagged bridge samples larger + border; PCA space derived separately before/after).
+# Refactored 2026-02; convention aligned with "PCA (Fixed Basis): Before vs After Harmonisation".
+batch_cols_page5 <- setNames(c("#2c7bb6", "#d7191c"), c(batch1_id, batch2_id))
+flagged_finngenid <- bridge_pair_dt[outlier_flag == TRUE]$finngenid
+
+# Left: Pre-harmonisation — PCA from aggregated pre data; all samples, bridge = triangles, connectors
+pca_pre_all <- pca_df[pca_df$stage == "Pre-harmonisation", ]
+pca_pre_all$finngenid <- NA_character_
+for (i in seq_along(common_bridge_fg)) {
+  pca_pre_all$finngenid[pca_pre_all$sample == sids_b1[i]] <- common_bridge_fg[i]
+  pca_pre_all$finngenid[pca_pre_all$sample == sids_b2[i]] <- common_bridge_fg[i]
+}
+pca_pre_all$is_flagged <- !is.na(pca_pre_all$finngenid) & (pca_pre_all$finngenid %in% flagged_finngenid)
+n_non_bridge_pre <- sum(!pca_pre_all$bridge)
+if (n_non_bridge_pre > 2000) {
+  set.seed(42)
+  keep_pre <- c(which(pca_pre_all$bridge), sample(which(!pca_pre_all$bridge), 2000))
+  pca_pre_all <- pca_pre_all[keep_pre, ]
+}
+bridge_conn_pre <- bridge_conn[bridge_conn$stage == "Pre-harmonisation", ]
+p_pca_left <- ggplot(pca_pre_all[!pca_pre_all$bridge, ], aes(x = PC1, y = PC2, colour = batch)) +
+  geom_point(alpha = 0.2, size = 0.5) +
+  geom_segment(data = bridge_conn_pre, aes(x = x, y = y, xend = xend, yend = yend),
+               inherit.aes = FALSE, colour = "grey50", alpha = 0.4, linewidth = 0.5) +
+  geom_point(data = pca_pre_all[pca_pre_all$bridge & !pca_pre_all$is_flagged, ],
+             size = 2.5, alpha = 0.9, shape = 17)
+if (any(pca_pre_all$is_flagged, na.rm = TRUE)) {
+  p_pca_left <- p_pca_left +
+    geom_point(data = pca_pre_all[pca_pre_all$bridge & pca_pre_all$is_flagged, ],
+               aes(x = PC1, y = PC2, fill = batch), size = 4, shape = 24, colour = PAL$accent, stroke = 1.5,
+               inherit.aes = FALSE) +
+    scale_fill_manual(values = batch_cols_page5, guide = "none")
+}
+p_pca_left <- p_pca_left +
+  scale_colour_manual(values = batch_cols_page5, name = "Batch") +
+  labs(
+    title = "Pre-harmonisation: aggregated batches",
+    subtitle = paste0(
+      "PCA space derived from aggregated samples before harmonisation (same convention as page 1).\n",
+      "All samples: small points by batch. Bridge samples: triangles; lines connect same individual across batches.\n",
+      "Flagged bridge pairs shown larger with border for tracking before/after.")) +
+  theme(legend.position = "bottom")
+
+# Right: Post-harmonisation — PCA from aggregated post data; all samples, bridge = triangles, connectors
+post_space_all <- data.frame(
+  PC1 = c(pc_post_space_b1[, 1], pc_post_space_b2[, 1]),
+  PC2 = c(pc_post_space_b1[, 2], pc_post_space_b2[, 2]),
+  batch = c(rep(batch1_id, nrow(pc_post_space_b1)), rep(batch2_id, nrow(pc_post_space_b2))),
+  sample = c(rownames(pc_post_space_b1), rownames(pc_post_space_b2)),
+  stringsAsFactors = FALSE
+)
+post_space_all$batch <- factor(post_space_all$batch, levels = c(batch1_id, batch2_id))
+post_space_all$bridge <- post_space_all$sample %in% c(sids_b1, sids_b2)
+post_space_all$finngenid <- NA_character_
+for (i in seq_along(common_bridge_fg)) {
+  post_space_all$finngenid[post_space_all$sample == sids_b1[i]] <- common_bridge_fg[i]
+  post_space_all$finngenid[post_space_all$sample == sids_b2[i]] <- common_bridge_fg[i]
+}
+post_space_all$is_flagged <- !is.na(post_space_all$finngenid) & (post_space_all$finngenid %in% flagged_finngenid)
+n_non_bridge_post <- sum(!post_space_all$bridge)
+if (n_non_bridge_post > 2000) {
+  set.seed(42)
+  keep_post <- c(which(post_space_all$bridge), sample(which(!post_space_all$bridge), 2000))
+  post_space_all <- post_space_all[keep_post, ]
+}
+bridge_conn_post <- build_connectors(pc_post_space_b1, pc_post_space_b2, sids_b1, sids_b2, "Post")
+if (nrow(post_space_all) > 0) {
+  p_pca_right <- ggplot(post_space_all[!post_space_all$bridge, ], aes(x = PC1, y = PC2, colour = batch)) +
+    geom_point(alpha = 0.2, size = 0.5) +
+    geom_segment(data = bridge_conn_post, aes(x = x, y = y, xend = xend, yend = yend),
+                 inherit.aes = FALSE, colour = "grey50", alpha = 0.4, linewidth = 0.5) +
+    geom_point(data = post_space_all[post_space_all$bridge & !post_space_all$is_flagged, ],
+               size = 2.5, alpha = 0.9, shape = 17) +
+    scale_colour_manual(values = batch_cols_page5, name = "Batch", drop = FALSE)
+  if (any(post_space_all$is_flagged, na.rm = TRUE)) {
+    p_pca_right <- p_pca_right +
+      geom_point(data = post_space_all[post_space_all$bridge & post_space_all$is_flagged, ],
+                 aes(x = PC1, y = PC2, fill = batch), size = 4, shape = 24,
+                 colour = PAL$accent, stroke = 1.5, inherit.aes = FALSE) +
+      scale_fill_manual(values = batch_cols_page5, guide = "none", drop = FALSE)
+  }
+  p_pca_right <- p_pca_right +
+    labs(
+      title = "Post-harmonisation: aggregated batches",
+      subtitle = paste0(
+        "PCA space derived from aggregated samples after harmonisation (same convention as page 1).\n",
+        "All samples: small points by batch. Bridge samples: triangles; lines connect same individual across batches.\n",
+        "Flagged bridge pairs shown larger with border for visual inspection.")) +
+    theme(legend.position = "bottom")
+} else {
+  p_pca_right <- ggplot(data.frame(PC1 = 0, PC2 = 0, batch = factor(batch1_id, levels = c(batch1_id, batch2_id))),
+                        aes(x = PC1, y = PC2, colour = batch)) +
+    geom_point(alpha = 0) +
+    scale_colour_manual(values = batch_cols_page5, name = "Batch", drop = FALSE) +
+    labs(
+      title = "Post-harmonisation: aggregated batches",
+      subtitle = paste0(
+        "No samples in post-derived PC space (projection dropped all).\n",
+        "PCA space is derived separately from aggregated data after harmonisation.")) +
+    theme(legend.position = "bottom")
+}
+p_pca_page5 <- ggarrange(p_pca_left, p_pca_right, ncol = 2, widths = c(1, 1),
+                         labels = c("A1", "A2"), common.legend = TRUE, legend = "bottom")
+
+# Variance explained by top 10 PCs (pre vs post, same colour scheme)
+n_pcs_plot <- min(10, ncol(cohort_pre$scores), ncol(cohort_post_space$scores))
+tot_var_pre  <- sum(apply(cohort_pre$scores, 2, function(x) var(x, na.rm = TRUE)))
+tot_var_post <- sum(apply(cohort_post_space$scores, 2, function(x) var(x, na.rm = TRUE)))
+pre_pct  <- if (tot_var_pre > 0)  100 * apply(cohort_pre$scores[, seq_len(n_pcs_plot), drop = FALSE], 2, function(x) var(x, na.rm = TRUE)) / tot_var_pre else rep(NA_real_, n_pcs_plot)
+post_pct <- if (tot_var_post > 0) 100 * apply(cohort_post_space$scores[, seq_len(n_pcs_plot), drop = FALSE], 2, function(x) var(x, na.rm = TRUE)) / tot_var_post else rep(NA_real_, n_pcs_plot)
+pc_labels_10 <- paste0("PC", seq_len(n_pcs_plot))
+var_df <- data.frame(
+  PC = factor(rep(pc_labels_10, 2), levels = pc_labels_10),
+  stage = factor(rep(c("Pre", "Post"), each = n_pcs_plot), levels = c("Pre", "Post")),
+  var_explained = c(pre_pct, post_pct),
+  stringsAsFactors = FALSE
+)
+var_df$var_explained[!is.finite(var_df$var_explained)] <- 0
+p_var_explained <- ggplot(var_df, aes(x = PC, y = var_explained, colour = stage, group = stage)) +
+  geom_line(linewidth = 1, alpha = 0.9, na.rm = TRUE) +
+  geom_point(size = 3, alpha = 0.9, na.rm = TRUE) +
+  scale_colour_manual(values = c(Pre = PAL$pre, Post = PAL$post), name = "Stage") +
+  labs(title = "Variance explained by top 10 PCs (pre vs post)",
+       subtitle = "Pre = PC space from aggregated batches before harmonisation; Post = PC space from aggregated batches after harmonisation. Same colour scheme as PCA panels.",
+       x = "Principal component", y = "Variance explained (%)") +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45, hjust = 1))
 
 # A2: NN Pairing Heatmap (swap detector) — with row annotation strip (grey = normal, accent = flagged)
 nn_heatmap_long <- as.data.frame(as.table(nn_dist_mat_post))
@@ -1897,9 +2044,9 @@ tryCatch({
     "Cross-Batch Harmonisation KPI Dashboard — Pairing & Identity Tests",
     face = "bold", size = 15)))
 
-  # Page 5: PCA + Batch Separability
-  page5 <- ggarrange(p_pca, p_sep, ncol = 1, nrow = 2,
-                     labels = c("A", "B"), heights = c(1.2, 1))
+  # Page 5: PCA pair (pre all / post bridge flagged) + Variance explained + Batch Separability
+  page5 <- ggarrange(p_pca_page5, p_var_explained, p_sep, ncol = 1, nrow = 3,
+                     labels = c("A", "B", "C"), heights = c(1.2, 0.7, 1))
   print(annotate_figure(page5, top = text_grob(
     "Cross-Batch Harmonisation KPI Dashboard — PCA & Batch Separability",
     face = "bold", size = 15)))

@@ -65,6 +65,9 @@ tests/
 COMMIT_MESSAGE*.txt
 SEX_OUTLIER_DETECTION_ALGORITHM.md
 *REPORT*.md
+*SUMMARY.md
+*INVESTIGATION.md
+*COMPARATIVE*.md
 
 # Development docs in subdirectories
 docs/GIT_WORKFLOW.md
@@ -78,6 +81,19 @@ scratch*.R
 *.log
 normalisation_*.log
 run_*.log
+test_*.log
+modified_*.log
+*_execution*.log
+all_bridges*.log
+bad_*.log
+
+# Intermediate development / bug-fix notes (keep untracked)
+BUG_FIX_*.md
+PIPELINE_EXECUTION_FIX_SUMMARY.md
+
+# Root-level development / curation intermediates (keep untracked)
+*_UPDATED.tsv
+bridge_sample_analysis.rds
 
 # Test and development scripts
 run_pipeline_from_step*.sh
