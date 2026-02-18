@@ -1,3 +1,10 @@
+## [1.7.1](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/compare/v1.7.0...v1.7.1) (2026-02-18)
+
+
+### Bug Fixes
+
+* **pipeline:** phased execution for Steps 09-11 and Step 11 batch-corrected loading ([90d608f](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/commit/90d608f8055b403a42dadd4ecb63d98b2b637ebf))
+
 # [1.7.0](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/compare/v1.6.1...v1.7.0) (2026-02-13)
 
 
