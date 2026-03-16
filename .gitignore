@@ -1,6 +1,8 @@
 # Active configuration files (contain real paths/credentials)
 config/config.yaml
 config/*.yaml
+# Production / instance config variants (e.g. config.yaml.pQTL.production, config.yaml.batch01.production)
+config/config.yaml.*
 !config/config.yaml.template
 
 # Output directories
@@ -8,6 +10,8 @@ output*/
 logs/
 data/
 normalization_comparison/
+# Per-batch standalone run output directories (e.g. Batch_02_covariate_unadjusted_for_Aoxing/)
+Batch_*/
 
 # R environment files
 .Rhistory

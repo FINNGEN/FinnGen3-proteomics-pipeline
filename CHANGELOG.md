@@ -1,3 +1,27 @@
+# [1.8.0](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/compare/v1.7.1...v1.8.0) (2026-03-12)
+
+
+### Features
+
+* **step-08:** add opt-in covariate-adjustment skip mode (`parameters.covariate_adjustment.enabled: false`); Step 08 copies the Step 06/07 normalised matrix to the Step 08 output path, sets `PIPELINE_STEP_SKIPPED=TRUE`, and exits cleanly — enabling full single-batch runs from Step 05d through Step 11 without any covariate adjustment ([scripts/08_covariate_adjustment.R](scripts/08_covariate_adjustment.R))
+
+
+### Bug Fixes
+
+* **step-10:** pre-initialise `finngenid_matrix <- NULL` before the batch-correction conditional block, preventing an "object not found" error when running in single-batch mode (`multi_batch_mode: false`) or when `adjust_for_batch: false` ([scripts/10_kinship_filtering.R](scripts/10_kinship_filtering.R))
+
+
+### Documentation
+
+* **config:** add `parameters.covariate_adjustment.enabled` (default `true`) and `covariates_to_adjust` list to `config.yaml.template`; legacy boolean flags retained for backwards compatibility but marked deprecated ([config/config.yaml.template](config/config.yaml.template))
+* **readme:** update single-batch flowchart to show optional Step 08 skip path; add Step 10 single-batch robustness note; add `enabled` flag to multi-batch covariate-adjustment config example; fix duplicate item numbering in Key Design Principles; add troubleshooting entries for Step 08 pass-through and Step 10 null-guard fix; version bump to 1.8.0 ([README.md](README.md))
+
+
+### Chores
+
+* **gitignore:** add `Batch_*/` pattern for per-batch standalone run output directories and `config/config.yaml.*` pattern for production/instance config variants; existing `!config/config.yaml.template` negation kept ([.gitignore](.gitignore))
+
+
 ## [1.7.1](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/compare/v1.7.0...v1.7.1) (2026-02-18)
 
 

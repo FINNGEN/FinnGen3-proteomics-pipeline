@@ -169,6 +169,9 @@ parameters:
 
   # Covariate adjustment (Step 08)
   covariate_adjustment:
+    # Set to false to skip adjustment: Step 08 copies 06/07 normalized matrix to 08 output path and exits.
+    # Use for single-batch runs when no covariate adjustment is desired (e.g. --from 05d --to 11).
+    enabled: true
     # List of covariates to adjust for (default: age and sex only)
     # Available options: age, sex, bmi, smoking
     # Note: Proteomic PCs (pPC1-10) are NOT adjusted for to preserve biological signal

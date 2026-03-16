@@ -73,9 +73,12 @@ flowchart TD
     Normalize --> BridgeNorm{"07_bridge_normalization.R: Optional Multi-batch only, Enhanced bridge methods, Not used in single-batch"}
 
     BridgeNorm -->|Enabled| BridgeNormRun["Enhanced Bridge: Quantile normalisation"]
-    BridgeNorm -->|Disabled| Covariate
+    BridgeNorm -->|Disabled| CovAdjCheck
 
-    BridgeNormRun --> Covariate["08_covariate_adjustment.R: Adjust for covariates, Default: age/sex - configurable, Proteomic PCs excluded"]
+    BridgeNormRun --> CovAdjCheck{"covariate_adjustment.enabled?"}
+
+    CovAdjCheck -->|"true (default)"| Covariate["08_covariate_adjustment.R: Adjust for covariates, Default: age/sex - configurable, Proteomic PCs excluded"]
+    CovAdjCheck -->|"false (pass-through)"| Phenotype
 
     Covariate --> Phenotype["09_prepare_phenotypes.R: Combine QC results, Create phenotype matrix"]
 
@@ -100,6 +103,7 @@ flowchart TD
     style QCReport fill:#e1f4ff
     style Normalize fill:#f4e1ff
     style BridgeNorm fill:#f4e1ff
+    style CovAdjCheck fill:#fff4e1
     style Covariate fill:#f4e1ff
 ```
 
@@ -564,9 +568,11 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
 
 #### 08_covariate_adjustment.R
 - **Purpose**: Adjust for biological covariates using linear regression
+- **Skip adjustment**: Set `parameters.covariate_adjustment.enabled: false` to skip adjustment; the script copies the normalized matrix from step 06 (or 07) to the step 08 output path and exits so step 09 can run without any covariate adjustment.
 - **Default Covariates**: Age and sex only (configurable via `config.yaml`)
 - **Available Covariates**: Age, sex, BMI, smoking status
 - **Configuration**:
+  - `enabled`: `true` (default) to run adjustment; `false` to pass through normalized data only.
   - Specify covariates via `parameters.covariate_adjustment.covariates_to_adjust` list in `config.yaml`
   - Example: `covariates_to_adjust: [age, sex, bmi, smoking]` to include all covariates
   - Default: `[age, sex]` if not specified
@@ -614,6 +620,7 @@ All samples are flagged but not removed until final QC integration (Step 05d), w
     4. Lexicographic SampleID order (deterministic final tie-breaker)
   - Uses quality metrics from Step 05d comprehensive QC data when available
 - **Batch Correction Integration**: When `adjust_for_batch: true`, automatically loads and processes batch-corrected data from Step 09
+- **Single-Batch Robustness**: `finngenid_matrix` is explicitly initialised to `NULL` before the batch-correction code path. This prevents an "object not found" error when running in single-batch mode (`multi_batch_mode: false`) or when `adjust_for_batch: false`, where the batch-corrected matrix is never loaded.
 - **Output Consistency**: Ensures SampleID and FINNGENID matrices have matching dimensions (one sample per person)
 - **Note**: The QCed set of samples has **not** been kinship filtered by default. Related individuals (e.g., sample duplicates, siblings, parent-offspring pairs) may be present. Users requiring unrelated samples should apply kinship filtering separately.
 - **Output**:
@@ -897,7 +904,7 @@ Phase 4: Steps 09-11 (execution strategy depends on batch correction)
    - During aggregation, batch 2 data is used for common samples (batch 2 is reference)
    - This avoids duplicates while retaining maximum sample size
 
-4. **Batch Correction Data Flow** (when `adjust_for_batch = true`):
+4. **Batch Correction Phased Execution** (when `adjust_for_batch = true`):
    - **Phased Execution**: Steps 09-11 execute step-by-step across all batches (not batch-by-batch)
    - **Phase 4.1** (Step 09 for all batches): Creates batch-corrected per-batch FINNGENID matrices
    - **Phase 4.2** (Step 10 for all batches): Loads batch-corrected data, applies kinship filtering
@@ -906,11 +913,11 @@ Phase 4: Steps 09-11 (execution strategy depends on batch correction)
    - **Without this**: Race condition where Batch 1 finishes Step 10 before Batch 2 creates batch-corrected data
    - During aggregation, batch_02 data is used for common FINNGENIDs (reference batch)
 
-4. **FINNGENID vs SampleID**:
+5. **FINNGENID vs SampleID**:
    - Steps 00-08: Use SampleID (original format)
    - Steps 09-11: Convert to FINNGENID (required for GWAS)
 
-5. **Batch Correction Data Flow** (when `adjust_for_batch: true`):
+6. **Batch Correction Data Flow** (when `adjust_for_batch: true`):
    - **Step 09**: Batch correction applied to aggregate matrix via per-protein linear regression (`lm(npx ~ batch)`)
      - Residuals are computed and added back to protein means (preserves protein-level scale)
      - Batch-corrected aggregate is split back into per-batch FINNGENID matrices
@@ -1164,6 +1171,32 @@ Rscript scripts/run_pipeline.R \
 - Step 07 (bridge normalization) requires QCed matrices from all batches
 - Aggregation (steps 09-11) requires normalized matrices from all batches
 
+### Single-batch run, no covariate adjustment, custom output folder
+
+To run **only one batch** (e.g. Batch 02) in **single-batch mode**, from **step 05d through step 11**, **without covariate adjustment** (step 08 skipped in effect), and write all results to a **specific folder**:
+
+1. **Use a dedicated config** (copy of `config.yaml`) where:
+   - `output.base_dir` is set to your desired output directory (e.g. `/path/to/my_batch2_output`).
+   - `parameters.normalization.multi_batch_mode` is set to `false` (so step 07 is skipped and the run is single-batch).
+   - `parameters.covariate_adjustment.enabled` is set to `false` (so step 08 does not adjust; it copies the normalized matrix from step 06 to the step 08 output path and exits; step 09 then runs as usual).
+
+2. **Run the pipeline** with step range 05d–11 and batch 02 only:
+
+```bash
+Rscript scripts/run_pipeline.R \
+  --config /path/to/your_config.yaml \
+  --from 05d \
+  --to 11 \
+  --batch batch_02
+```
+
+**Prerequisites**: Steps 00–05d must already have been run for the target batch (e.g. batch_02) so that outputs exist under the same `output.base_dir` (or run from step 00 with this config). Then step 06 runs and produces the normalized matrix; step 08 (with `enabled: false`) copies it to the step 08 output path and exits; steps 09–11 produce phenotype and PLINK outputs under `output/base_dir` (e.g. `normalized/batch_02/`, `phenotypes/batch_02/`).
+
+**Summary**:
+- **Single-batch**: `multi_batch_mode: false` + `--batch batch_02` (only one batch in the run).
+- **No covariate adjustment**: `parameters.covariate_adjustment.enabled: false` (step 08 pass-through).
+- **Custom output**: Set `output.base_dir` in that config to your target folder.
+
 ## Pipeline Design Principles
 
 1. **Modular Architecture**: Each step is a standalone script that can be run independently
@@ -1283,18 +1316,25 @@ parameters:
 
 #### Step 5: Configure Covariate Adjustment (Optional)
 
-By default, the pipeline adjusts for age and sex only. To customize which covariates to adjust for:
+By default, the pipeline adjusts for age and sex only. To customise which covariates to adjust for, or to skip adjustment entirely:
 
 ```yaml
 parameters:
   covariate_adjustment:
-    # List of covariates to adjust for (default: age and sex only)
+    # Set to false to skip adjustment entirely:
+    # Step 08 copies the Step 06/07 normalised matrix to the Step 08 output path and exits.
+    # Step 09 onwards runs as normal on the unadjusted matrix.
+    # Default: true (adjustment enabled).
+    enabled: true
+
+    # Preferred list-based covariate specification (takes precedence over legacy boolean flags)
     # Available options: age, sex, bmi, smoking
     covariates_to_adjust:
       - age
       - sex
       # - bmi      # Uncomment to include BMI
       # - smoking  # Uncomment to include smoking
+
     # Batch correction (multi-batch mode only, applied during Step 09 aggregation)
     # Regresses out residual batch effect per protein after combining batches.
     # Produces additional batch-corrected aggregate and per-batch NPX matrices.
@@ -1457,14 +1497,24 @@ Bridge samples are shared across batches and are essential for cross-batch harmo
    - Set `GOOGLE_APPLICATION_CREDENTIALS` environment variable
    - Ensure gcloud SDK is authenticated
 
+5. **Step 08 exits without adjusting (pass-through mode)**
+   - This is intentional when `parameters.covariate_adjustment.enabled: false`.
+   - Step 08 copies the Step 06 (or Step 07 if available) normalised matrix to the Step 08 output path and sets `PIPELINE_STEP_SKIPPED=TRUE`.
+   - Steps 09–11 will run on the unadjusted normalised matrix — this is the expected behaviour for single-batch runs that do not require covariate adjustment.
+   - If adjustment **is** required, ensure `enabled: true` (the default) is set in your config.
+
+6. **Step 10 error: "object 'finngenid_matrix' not found" (single-batch runs)**
+   - This was a bug in versions prior to v1.8.0, where the variable was only assigned inside the batch-correction conditional block.
+   - Fixed by pre-initialising `finngenid_matrix <- NULL` before the block. Upgrade to v1.8.0 or later if you encounter this.
+
 ## Citation
 
 If you use this pipeline, please cite:
 
 - **Pipeline**: FinnGen 3 Olink Proteomics Analysis Pipeline
 - **Author**: Reza Jabal, PhD (rjabal@broadinstitute.org)
-- **Version**: 1.7.1
-- **Release Date**: February 2026
+- **Version**: 1.8.0
+- **Release Date**: March 2026
 - **Platform**: Olink Explore HT (5K)
 
 ## Versioning and Releases

@@ -609,6 +609,9 @@ main <- function() {
 
   log_info("Loading data from previous steps")
 
+  # Ensure finngenid_matrix exists for the fallback condition (single-batch or no batch-corrected file)
+  finngenid_matrix <- NULL
+
   # Try to load batch-corrected data first if batch correction is enabled
   if (adjust_for_batch && multi_batch_mode) {
     finngenid_matrix_batch_corrected_path <- get_output_path("09", "phenotype_matrix_finngenid_batch_corrected",

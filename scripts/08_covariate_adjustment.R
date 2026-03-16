@@ -976,6 +976,36 @@ create_pca_biplot_comparison <- function(npx_matrix, adjusted_matrix, covariates
 # Main execution
 main <- function() {
 
+  # Optional: skip adjustment and pass through normalized matrix (06/07 → 08 path)
+  covariate_enabled <- tryCatch(
+    config$parameters$covariate_adjustment$enabled,
+    error = function(e) NULL
+  )
+  if (identical(covariate_enabled, FALSE)) {
+    log_info("Covariate adjustment disabled (parameters.covariate_adjustment.enabled: false). Passing through normalized matrix.")
+    npx_file_candidates <- c(
+      get_output_path("07", "npx_matrix_cross_batch_bridge", batch_id, "normalized", config = config),
+      get_output_path("06", "npx_matrix_normalized", batch_id, "normalized", config = config)
+    )
+    npx_file <- NULL
+    for (candidate in npx_file_candidates) {
+      if (file.exists(candidate)) {
+        npx_file <- candidate
+        break
+      }
+    }
+    if (is.null(npx_file)) {
+      stop("No normalized NPX matrix found. Please run step 06 (and optionally step 07) first.")
+    }
+    out_path <- get_output_path(step_num, "npx_matrix_covariate_adjusted", batch_id, "normalized", config = config)
+    ensure_output_dir(out_path)
+    npx_matrix <- readRDS(npx_file)
+    saveRDS(npx_matrix, out_path)
+    log_info("Saved pass-through matrix to: {out_path}")
+    Sys.setenv(PIPELINE_STEP_SKIPPED = "TRUE")
+    return(invisible(NULL))
+  }
+
   # Load data from previous steps
   log_info("Loading data from previous steps")
 
