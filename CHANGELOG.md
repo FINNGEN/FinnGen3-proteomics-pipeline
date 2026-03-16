@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/compare/v1.7.1...v1.8.0) (2026-03-16)
+
+
+### Features
+
+* **step-08,step-10,config,docs:** covariate-adjustment skip mode, single-batch runbook, and kinship null-guard ([dbeddbc](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/commit/dbeddbcf9d7abca0761b283b16f30a333ce4a55f))
+
 # [1.8.0](https://github.com/FINNGEN/FinnGen3-proteomics-pipeline/compare/v1.7.1...v1.8.0) (2026-03-12)
 
 

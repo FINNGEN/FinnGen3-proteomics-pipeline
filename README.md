@@ -2,7 +2,7 @@
 
 **Platform**: Olink Explore HT (5K)
 
-**Version**: 1.7.1
+**Version**: 1.8.0
 
 **Release Date**: February 2026
 
@@ -1101,7 +1101,7 @@ echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
 # Pull the image
 docker pull ghcr.io/USERNAME/fg3-olink-pipeline:latest
 
-# Or pull a specific version (e.g., v1.7.1)
+# Or pull a specific version (e.g., v1.8.0)
 docker pull ghcr.io/USERNAME/fg3-olink-pipeline:1.2.1
 
 # Run the pipeline
