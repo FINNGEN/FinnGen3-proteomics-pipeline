@@ -38,14 +38,49 @@ batches:
       metadata_file: "/path/to/batch_02_metadata.tsv"
       bridging_samples_file: "/path/to/bridging_samples.csv"  # Optional
       bridging_samples_finngenid_map: "/path/to/bridging_finngenid_map.tsv"  # Optional
+  batch_03:
+    batch_id: "batch_03"
+    batch_designation: "fg3_batch_03"  # Suffix used in output filenames
+    data:
+      # Produced by scripts/00a_ingest_vendor_npx.R from the vendor Extended NPX long-format delivery.
+      # Do NOT point this at the raw vendor file: Step 00 would dcast it but then rebuild its long
+      # representation from the wide matrix, fabricating SampleQC/AssayQC/SampleType and discarding
+      # PlateID, WellID, the QC counters and the OSI columns. Run 00a first.
+      npx_matrix_file: "/path/to/00a_npx_matrix_raw_fg3_batch_03.rds"
+      # Batch 03 has no provider cohort/metadata TSV. The THL plate-2 volumes file supplies biobank,
+      # collection/processing/freezing timestamps, barcode, freeze-thaw, hemolysis, volume and plate
+      # position for 5,331 of 6,191 samples; the 860 P1516_* samples have no THL metadata at all.
+      metadata_file: "/path/to/finngen_proteomics3_final_data_plate2_volumes.txt"
+      # SampleID -> FINNGENID crosswalk. Required: batch 03 SampleIDs span two namespaces
+      # (P + 20 digits, and the Broad P1516_* collection IDs) and carry a "-rep" technical-replicate
+      # suffix that must be stripped before lookup.
+      sample_id_map_file: "/path/to/finngen_proteomics3_combined_SampleID_FinngenID.txt"
+      bridging_samples_file: "/path/to/FG_cross_batch_bridging_metadata.tsv"
+      bridging_samples_finngenid_map: null
+      # Sample-level ancillary tables emitted by step 00a
+      sample_index_file: "/path/to/00a_sample_index_fg3_batch_03.tsv"
+      assay_inventory_file: "/path/to/00a_assay_inventory_fg3_batch_03.tsv"
+      # Registry-derived disease-group eligibility (NOT provider selection lists - see protocol 5.6b)
+      disease_group_eligibility_file: "/path/to/fg3_batch03_disease_group_eligibility_DERIVED_v1.tsv"
+      # SampleIDs hard-excluded on consent grounds, one per line
+      withdrawal_list_file: "/path/to/withdrawals_fg3_batch_03.txt"
 
 # Covariate and kinship paths
 covariates:
+  # Genotype release these resources come from. Recorded in outputs so a release can never be
+  # ambiguous about which FinnGen data freeze its genetic QC was run against.
+  genotype_release: "R14"  # e.g. "R13", "R14"
   kinship_file: "/path/to/kinship_matrix.kin0"  # Kinship matrix file
-  # Primary covariate file (includes smoking information)
-  covariate_file: "/path/to/covariates.txt.gz"  # Covariate file with genetic PCs, age, sex, BMI, smoking
-  # Fallback file for sex information (used when FINNGENID not found in covariate_file)
-  finngen_r13_minimum_file: "/path/to/finngen_r13_minimum.txt.gz"  # Optional: Fallback for sex information
+  # Primary covariate file (genetic PCs, age, sex, BMI, smoking).
+  # For R14 use gs://r14-data/pheno/R14_COV_V0.FID.txt.gz - it carries BL_AGE, SEX, SEX_IMPUTED,
+  # HEIGHT, WEIGHT, BMI, SMOKE2/3/5, SMOKE_AGE and PC1-PC20 in a single file, so the bespoke
+  # R13_COV_PHENO_V0_WITH_SMOKING derivation used for R13 is not needed.
+  covariate_file: "/path/to/covariates.txt.gz"
+  # Fallback file for sex information (used when FINNGENID not found in covariate_file).
+  # R14 equivalent: gs://r14-data/fg-analysis-r_resources/finngen_R14_minimum_extended_1.0.parquet
+  finngen_r13_minimum_file: "/path/to/finngen_minimum.txt.gz"  # Optional: Fallback for sex information
+  # Optional: restrict to the release's actual analysis set
+  inclusion_list_file: null  # e.g. "/path/to/finngen_R14_finngenid_actual_inclusion_list.txt"
 
 # Output directories
 # All paths are relative to base_dir or can use environment variable PIPELINE_OUTPUT_DIR
@@ -68,6 +103,54 @@ parameters:
     min_sample_call_rate: 0.90
     min_protein_call_rate: 0.90
     remove_control_probes: true  # Remove control probes (Incubation, Extension, Amplification) from biological-only outputs (default: true)
+    # Assays the vendor excluded at batch release. These arrive with Count == 0 and NPX/PCNormalizedNPX
+    # all NaN, so the missingness filter would drop them anyway; naming them makes the removal explicit
+    # and logged in one place. Leave as [] when the delivery excluded nothing.
+    vendor_excluded_assays: []  # e.g. ["ACTR5", "BCLAF1", "CRYM"]
+    # Remove samples with no genetic sex. Sex-outlier detection cannot evaluate them, so leaving them in
+    # would mean publishing samples that silently bypassed one QC method.
+    remove_missing_genetic_sex: true
+
+  # Sample handling
+  sample_handling:
+    # Preserve repeat/serial measurements of the same individual.
+    # When true: duplicate-FINNGENID collapse and best-quality-per-individual selection are DISABLED,
+    # released matrices stay indexed by SampleID (FINNGENID is not unique), and kinship is reported as a
+    # relationship table plus a recommended unrelated subset WITHOUT removing rows.
+    # Required for longitudinal batches. Batch 03 has ~1,556 repeat samples across 1,477 individuals.
+    preserve_repeat_samples: false
+    # Technical-replicate SampleID suffix. When set, "<SampleID><suffix>" resolves to the FINNGENID of
+    # the base SampleID and the row is flagged is_technical_replicate. Unset (null) means such IDs fail
+    # to resolve and are dropped - the failure mode that lost 50 EA5 bridge samples in batch 02.
+    technical_replicate_suffix: null  # e.g. "-rep"
+    # Partition rule for samples that cannot be mapped to a FinnGen ID.
+    # "separate_deliverable": route them to their own output directory (they are not FinnGen data)
+    # "drop": remove silently (legacy behaviour, not recommended)
+    unmappable_sample_policy: "separate_deliverable"
+    # Optional attribute-only tagging of a separate-project subset. These samples REMAIN in the main
+    # release when they have mappable FinnGen IDs; the tag travels in the metadata schema and drives a
+    # convenience extract. Use when a biobank has selected a subset for a distinct study.
+    separate_project:
+      enabled: false
+      label: null            # e.g. "ArcticBiobank"
+      selector_column: null  # metadata column to match on, e.g. "BIOBANK"
+      selector_values: []    # e.g. ["Arctic Biobank"]
+
+  # Olink Sample Index (OSI) - present from NPX Map 2.0.0 onward
+  osi:
+    # Carry OSI as covariates and as a reported QC flag.
+    enabled: true
+    # OSI fields to expose as adjustable covariates
+    covariates:
+      - OSISummary
+      - OSITimeToCentrifugation
+      - OSIPreparationTemperature
+    # Flag samples in the worst OSI category. Reported in the QC table either way.
+    flag_category: 4
+    # Whether the flag REMOVES samples. Keep false until the index is calibrated against a batch with a
+    # known ground truth: the worst category can cover a large share of a delivery (17.6% in batch 03),
+    # and OSI directionality is not yet corroborated against Olink documentation.
+    remove_flagged: false
 
   # Outlier detection
   outliers:
