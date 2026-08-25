@@ -33,6 +33,11 @@ B <- opt$batch
 pick <- function(...) { for (p in c(...)) if (file.exists(p)) return(p); NA_character_ }
 qc <- function(f) file.path(opt$run_dir, "qc", f)
 ou <- function(f) file.path(opt$run_dir, "outliers", f)
+ph <- function(f) file.path(opt$run_dir, "phenotypes", f)
+# Step 05d writes to phenotypes/ and doubles its step prefix (05d_05d_*), so search all three
+# locations under both the single and doubled prefix.
+p3 <- function(stem, ext) pick(ph(paste0("05d_05d_", stem, ".", ext)), ph(paste0("05d_", stem, ".", ext)),
+                               qc(paste0("05d_", stem, ".", ext)), ou(paste0("05d_", stem, ".", ext)))
 
 write3 <- function(m, stem) {
   saveRDS(m, file.path(opt$outdir, paste0(stem, ".rds")))
@@ -44,9 +49,9 @@ write3 <- function(m, stem) {
 
 # ---- inputs ---------------------------------------------------------------------------------------
 p_all   <- file.path(opt$staging, paste0("00a_npx_matrix_raw_", B, ".rds"))
-p_meta  <- pick(qc("05d_qc_annotated_metadata.rds"), ou("05d_qc_annotated_metadata.rds"))
-p_out   <- pick(qc("05d_comprehensive_outliers_list.tsv"), ou("05d_comprehensive_outliers_list.tsv"))
-p_pass  <- pick(qc("05d_npx_matrix_all_qc_passed.rds"), ou("05d_npx_matrix_all_qc_passed.rds"))
+p_meta  <- p3("qc_annotated_metadata", "tsv")
+p_out   <- p3("comprehensive_outliers_list", "tsv")
+p_pass  <- p3("npx_matrix_all_qc_passed", "rds")
 p_map   <- qc("00_sample_mapping.rds")
 p_b0meta<- file.path(opt$staging, paste0("00b_metadata_", B, ".tsv"))
 p_assay <- file.path(opt$staging, paste0("00a_assay_inventory_", B, ".tsv"))
@@ -112,7 +117,7 @@ for (thr in c(0.90, 0.50)) {
 
 # ---- annotated metadata, outlier list, ancillary tables -------------------------------------------
 if (!is.na(p_meta)) {
-  am <- as.data.table(readRDS(p_meta))
+  am <- if (grepl("\\.rds$", p_meta)) as.data.table(readRDS(p_meta)) else fread(p_meta)
   idc <- intersect(c("SampleID", "SAMPLE_ID"), names(am))[1]
   am <- merge(am, b0, by.x = idc, by.y = "SAMPLE_ID", all.x = TRUE, suffixes = c("", "_b0"))
   fwrite(am, file.path(opt$outdir, sprintf("qc_annotated_metadata_all_%d_samples_%s.tsv", nrow(am), B)), sep = "\t")

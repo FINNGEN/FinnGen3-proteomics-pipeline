@@ -22,6 +22,7 @@ pandoc "$DIR/.$STEM.body.md" \
   --output "$DIR/$STEM.tex"
 echo "wrote $DIR/$STEM.tex"
 
+trap 'rm -f "$DIR/.$STEM.body.md"' EXIT
 ( cd "$DIR" && tectonic -X compile "$STEM.tex" --outdir . >/dev/null 2>&1 ) \
   && echo "wrote $DIR/$STEM.pdf" \
   || { echo "tectonic failed; retrying with diagnostics"; ( cd "$DIR" && tectonic -X compile "$STEM.tex" --outdir . 2>&1 | tail -25 ); }

@@ -1,0 +1,1081 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{tcolorbox}
+
+\geometry{margin=1in}
+
+% ── Hyperref ─────────────────────────────────────────────────
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,
+    urlcolor=teal,
+}
+
+% ── Convenience macro for pipeline link ──────────────────────
+\newcommand{\pipelinelink}{%
+  \href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline}%
+       {FinnGen~3 Olink pipeline}}
+
+% ── Header / Footer ─────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0.4pt}
+\fancyfoot[L]{\footnotesize
+  Reza Jabal, PhD
+  (\href{mailto:rjabal@broadinstitute.org}{rjabal@broadinstitute.org})
+  \textbullet\ Broad Institute of MIT and Harvard}
+\fancyfoot[R]{\footnotesize\thepage}
+
+\fancypagestyle{plain}{%
+  \fancyhf{}
+  \renewcommand{\headrulewidth}{0pt}
+  \renewcommand{\footrulewidth}{0.4pt}
+  \fancyfoot[L]{\footnotesize
+    Reza Jabal, PhD
+    (\href{mailto:rjabal@broadinstitute.org}{rjabal@broadinstitute.org})
+    \textbullet\ Broad Institute of MIT and Harvard}
+  \fancyfoot[R]{\footnotesize\thepage}
+}
+
+% ── Code style ───────────────────────────────────────────────
+\lstset{
+    basicstyle=\ttfamily\scriptsize,
+    breaklines=true,
+    captionpos=b,
+    numbers=left,
+    numberstyle=\tiny,
+    frame=single,
+    backgroundcolor=\color{gray!10}
+}
+
+% ── Prevent overfull hboxes in long \texttt{} strings ────────
+\sloppy
+
+\begin{document}
+
+% ══════════════════════════════════════════════════════════════
+%  COVER PAGE
+% ══════════════════════════════════════════════════════════════
+\thispagestyle{plain}
+
+\begin{center}
+
+\vspace*{2cm}
+
+{\LARGE\bfseries FinnGen~3 Cross-Batch Harmonised\\[0.3em]
+Proteomics Data Release Note}
+
+\vspace{0.6cm}
+
+{\large Batch~01 + Batch~02 Aggregate\\[0.2em]
+Production Run, February 2026}
+
+\vspace{1.8cm}
+
+\begin{tabular}{@{} r @{\quad} l @{}}
+\textbf{Release Date}       & March 2026 (v1.0) \\[4pt]
+\textbf{Platform}           & Olink Explore HT (5K) \\[4pt]
+\textbf{Batches}            & FG3 Batch~01 and FG3 Batch~02 (harmonised aggregate) \\[4pt]
+\textbf{Input (post-QC)}    & Batch~01: 1,957 samples $\times$ 5,440 proteins \\
+                             & Batch~02: 2,458 samples $\times$ 5,416 proteins \\[4pt]
+\textbf{Final Aggregate}    & \textbf{4,118 samples} $\times$ \textbf{5,416 proteins} \\
+                             & (22,303,288 measurements) \\[4pt]
+\textbf{Author}             & Reza Jabal, PhD
+                               (\href{mailto:rjabal@broadinstitute.org}{rjabal@broadinstitute.org}) \\[4pt]
+\textbf{Reviewer}           & Mitja Kurki, PhD
+                               (\href{mailto:mkurki@broadinstitute.org}{mkurki@broadinstitute.org}) \\[4pt]
+\textbf{Pipeline}           & \pipelinelink{} --- v1.7.1 \\
+\end{tabular}
+
+\vspace{1.5cm}
+
+\begin{tcolorbox}[colback=gray!5,colframe=gray!60,boxrule=0.5pt,
+                  width=0.92\textwidth]
+\textbf{Scope.}\enspace
+This release note covers \href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Steps~06--11} of the \pipelinelink{} ---
+within-batch normalisation, cross-batch bridge harmonisation, covariate
+adjustment, phenotype preparation, kinship filtering, and inverse rank
+normalisation --- applied to the post-QC outputs of Batch~01 and Batch~02.
+Per-batch QC (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Steps~00--05d}) is documented in the respective per-batch
+release notes.
+\end{tcolorbox}
+
+\end{center}
+
+\newpage
+\tableofcontents
+\newpage
+
+%% ═════════════════════════════════════════════════════════════
+\section{File Descriptions (Brief Summary)}
+\label{sec:files}
+
+All files are provided in three formats (RDS, Parquet, TSV) unless otherwise
+noted. Row identifiers are SampleIDs for per-batch \href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~07} matrices and
+FINNGENIDs for all \href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~09}+ matrices and aggregate outputs. All matrices
+contain 5,416 biological proteins (columns). For detailed format
+specifications, see Section~\ref{sec:detailed_formats}.
+
+\subsection{Per-Batch Bridge-Normalised NPX (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~07})}
+
+\textbf{Files}:\par\noindent
+\texttt{npx\_bridge\_normalised\_1957\_samples\_fg3\_batch\_01.\allowbreak\{rds,parquet,tsv\}}\par\noindent
+\texttt{npx\_bridge\_normalised\_2458\_samples\_fg3\_batch\_02.\allowbreak\{rds,parquet,tsv\}}
+
+Per-batch NPX matrices after within-batch median normalisation (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~06}) and
+cross-batch Olink standard bridge normalisation (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~07}). These are
+\textbf{not covariate-adjusted} and \textbf{not kinship-filtered}. Row~IDs
+are the original Olink SampleIDs (not FINNGENIDs). To map SampleIDs to
+FINNGENIDs, use the per-batch sample mapping file produced in \href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~00}
+(\texttt{00\_sample\_mapping\_fg3\_batch\_01.rds}\,/\,%
+\texttt{00\_sample\_mapping\_fg3\_batch\_02.rds}), which contains a
+\texttt{SampleID}~$\to$~\texttt{FINNGENID} lookup for all FinnGen
+participants. Use for analyses requiring harmonised NPX values before any
+covariate adjustment or sample removal.
+
+\subsection{Per-Batch FINNGENID Pre-Kinship NPX (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~09})}
+
+\textbf{Files}:\par\noindent
+\texttt{npx\_finngenid\_prekinship\_1955\_samples\_fg3\_batch\_01.\allowbreak\{rds,parquet,tsv\}}\par\noindent
+\texttt{npx\_finngenid\_prekinship\_2448\_samples\_fg3\_batch\_02.\allowbreak\{rds,parquet,tsv\}}
+
+Per-batch NPX matrices after covariate adjustment, outlier reconciliation,
+and FINNGENID conversion. \textbf{Not kinship-filtered} and \textbf{not
+deduplicated} --- where a FINNGENID has multiple SampleIDs (technical
+replicates), all measurements are preserved as separate rows. Duplicate
+resolution and kinship filtering occur in \href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~10}. Row~IDs are FINNGENIDs
+(some may appear more than once). For Batch~02, the 50 bridging samples have
+been re-indexed from EA5\_OLI\_ SampleIDs to FINNGENIDs using
+\texttt{FG\_cross\_batch\_bridging\_metadata.tsv}.
+
+\subsection{Aggregate Pre-Kinship NPX (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~09})}
+
+\textbf{Files}:\par\noindent
+\texttt{npx\_aggregate\_prekinship\_4360\_samples.\allowbreak\{rds,parquet,tsv\}}
+
+Combined aggregate (Batch~01 + Batch~02) after cross-batch overlap resolution
+and bridging sample FINNGENID recovery. Covariate-adjusted (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~08}) and
+bridge-normalised (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~07}), but \textbf{not batch-corrected} (no
+\texttt{lm(NPX $\sim$ batch)} applied). Duplicate FINNGENIDs (technical
+replicates) are preserved. \textbf{Not kinship-filtered} and \textbf{not
+rank-normalised}. 4,360~rows $\times$ 5,416~proteins. Row~IDs are FINNGENIDs.
+Use for analyses where batch-level signal should be preserved.
+
+\subsection{Aggregate Pre-Kinship NPX --- Batch-Corrected (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~09})}
+
+\textbf{Files}:\par\noindent
+\texttt{npx\_aggregate\_batch\_corrected\_prekinship\_4360\_samples.\allowbreak\{rds,parquet,tsv\}}
+
+Same as above, but with the additional per-protein residual batch adjustment
+applied (\texttt{lm(NPX $\sim$ batch)}, see Section~\ref{sec:residual_batch}).
+Duplicate FINNGENIDs preserved. \textbf{Not kinship-filtered}, \textbf{not
+rank-normalised}. 4,360~rows $\times$ 5,416~proteins.
+
+\subsection{Final Aggregate --- Kinship-Filtered, Rank-Normalised (pQTL-ready)}
+
+\textbf{Files}:\par\noindent
+\texttt{npx\_aggregate\_rank\_normalised\_unrelated\_4118\_samples.\allowbreak\{rds,parquet,tsv\}}\par\noindent
+\texttt{npx\_aggregate\_rank\_normalised\_unrelated\_4118\_samples.pheno}
+(PLINK format)
+
+The primary analysis-ready dataset. \textbf{4,118 unrelated FinnGen samples}
+with inverse rank-normalised protein expression values. Row~IDs are
+FINNGENIDs. The \texttt{.pheno} file is PLINK format (FID~IID + 5,416
+protein columns).
+
+\subsection{Auxiliary Files}
+
+\begin{itemize}
+  \item \texttt{sample\_list\_aggregate\_unrelated\_4118.txt}
+        --- 4,118 FINNGENIDs (one per line)
+  \item \texttt{protein\_list\_5416.txt}
+        --- 5,416 protein identifiers (one per line)
+  \item \texttt{batch\_r2\_diagnostics.tsv}
+        --- per-protein batch $R^{2}$ before correction
+  \item \texttt{comprehensive\_outliers\_list\_fg3\_batch\_01.tsv}
+        --- QC outliers, Batch~01
+  \item \texttt{comprehensive\_outliers\_list\_fg3\_batch\_02.tsv}
+        --- QC outliers, Batch~02
+  \item \texttt{removed\_221\_breakdown\_summary.tsv}
+        --- attrition breakdown (221 samples)
+  \item \texttt{removed\_221\_full\_id\_details.tsv}
+        --- ID-level detail for all 221 removed samples
+\end{itemize}
+
+\subsection{LOD-Filtered High-Quality Assay Subsets}
+
+\begin{tcolorbox}[colback=yellow!5,colframe=orange!60,boxrule=0.5pt,
+                  title=Analyst Recommendation]
+Although this release provides cross-batch normalised data across all 5,416
+biological proteins, we recommend that analysts restrict quantitative
+analyses (e.g.\@ differential expression, association testing) to the
+\textbf{3,075 high-quality assays} where at least 10\% of biological
+samples have NPX values above the per-protein limit of detection (LOD).
+Proteins that fail this criterion ($>90\%$ of samples below LOD) have the
+vast majority of measurements at or near background noise, which can inflate
+false-positive rates and reduce statistical power. The full 5,416-protein
+matrices are provided for completeness and for analysts who wish to apply
+their own detection thresholds (e.g.\@ a stricter 50\% LOD threshold yields
+2,102 assays).
+\end{tcolorbox}
+
+\textbf{LOD definition.}\enspace Per-protein LOD is computed from Negative
+Control (NC) wells in the raw Olink Explore HT data (Batch~02) as:
+\[
+  \text{LOD}_{\text{protein}}
+    = \text{mean}(\text{NC\_NPX})
+    + 3 \times \text{SD}(\text{NC\_NPX})
+\]
+pooled across all 30 plates (60 NC observations per protein). A protein
+fails the recommended LOD filter if more than 90\% of biological samples
+have raw NPX $<$ LOD.
+
+\textbf{LOD statistics} (5,416 proteins):
+\begin{itemize}
+  \item Proteins above LOD ($\leq 90\%$ below): \textbf{3,075} (56.8\%)
+  \item Proteins below LOD ($> 90\%$ below): 2,341 (43.2\%)
+  \item Proteins with 0\% below LOD: 620 (11.4\%)
+  \item Median per-protein below-LOD rate: 82.3\%
+\end{itemize}
+
+{\footnotesize
+\renewcommand{\arraystretch}{1.2}
+\begin{longtable}{p{5.5cm}p{3cm}p{2cm}}
+\toprule
+\textbf{LOD threshold} & \textbf{Proteins passing} & \textbf{Fraction} \\
+\midrule
+$\leq 50\%$ below LOD (stringent) & 2,102 & 38.8\% \\
+$\leq 75\%$ below LOD & 2,495 & 46.1\% \\
+$\leq 90\%$ below LOD (\textbf{recommended}) & \textbf{3,075} & \textbf{56.8\%} \\
+$\leq 95\%$ below LOD (lenient) & 3,564 & 65.8\% \\
+\bottomrule
+\end{longtable}
+\renewcommand{\arraystretch}{1.0}
+}
+
+\textbf{Files}:
+\begin{itemize}
+  \item \texttt{assay\_list\_above\_lod\_3075.txt}
+        --- 3,075 protein names that pass the 90\% LOD filter
+  \item \texttt{lod\_nc\_summary\_batch02.tsv}
+        --- Full per-protein LOD summary. Analysts can use this table
+        to apply any custom threshold
+  \item \texttt{npx\_aggregate\_above\_lod\_prekinship\_4360\allowbreak\_samples\_3075\_proteins.\{rds,parquet,tsv\}}
+        --- Pre-kinship aggregate sliced to 3,075 high-quality proteins
+        (4,360 $\times$ 3,075). Not batch-corrected, not kinship-filtered, not rank-normalised
+  \item \texttt{npx\_bridge\_normalised\_above\_lod\_1957\allowbreak\_samples\_3075\_proteins\_fg3\_batch\_01.\{rds,parquet,tsv\}}
+        --- Batch~01 bridge-normalised, 3,075 proteins.
+        Not covariate-adjusted, not kinship-filtered
+  \item \texttt{npx\_bridge\_normalised\_above\_lod\_2458\allowbreak\_samples\_3075\_proteins\_fg3\_batch\_02.\{rds,parquet,tsv\}}
+        --- Batch~02 bridge-normalised, 3,075 proteins.
+        Not covariate-adjusted, not kinship-filtered
+\end{itemize}
+
+\vspace{0.5cm}
+\noindent\rule{\linewidth}{0.5pt}
+\vspace{0.5cm}
+
+%% ═════════════════════════════════════════════════════════════
+\section{Input Summary --- QC-Passed Starting Points}
+
+The \pipelinelink{} receives as input the per-batch post-QC NPX matrices
+produced by \href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Steps~00--05d}.
+
+{\footnotesize
+\renewcommand{\arraystretch}{1.2}
+\begin{longtable}{p{2cm}p{2cm}p{2cm}p{7.5cm}}
+\toprule
+\textbf{Batch} & \textbf{Samples} & \textbf{Proteins} & \textbf{Source file} \\
+\midrule
+Batch~01 & 1,957 & 5,440
+  & \texttt{05d\_05d\_npx\_matrix\_all\_qc\_passed\allowbreak\_fg3\_batch\_01.rds} \\
+Batch~02 & 2,458 & 5,416
+  & \texttt{05d\_05d\_npx\_matrix\_all\_qc\_passed\allowbreak\_fg3\_batch\_02.rds} \\
+\bottomrule
+\end{longtable}
+\renewcommand{\arraystretch}{1.0}
+}
+
+\textbf{Protein panel.}\enspace
+Batch~01 contains 5,440 proteins (including 24 control probes); Batch~02
+contains 5,416 biological proteins. Cross-batch processing uses the
+\textbf{intersection of 5,416 common proteins}, excluding the 24 control
+probes present in the Batch~01 matrix.
+
+\subsection{Sex Outlier Detection Mode}
+
+The production run used \texttt{sex\_outlier\_mode:\allowbreak\ strict\_only}
+for both batches:
+
+\begin{itemize}
+  \item \textbf{TIER~1 (strict mismatches)}: Samples where
+        \texttt{predicted\_sex $\neq$ genetic\_sex} are flagged \textbf{and
+        removed} from the QC-passed dataset.
+  \item \textbf{TIER~2 (threshold-based outliers)}: Samples with borderline
+        sex prediction probabilities that still match genetic sex are flagged
+        but \textbf{kept} in the dataset.
+\end{itemize}
+
+{\footnotesize
+\renewcommand{\arraystretch}{1.2}
+\begin{longtable}{p{1.8cm}p{2.8cm}p{3.2cm}p{2.8cm}p{1.8cm}}
+\toprule
+\textbf{Batch} & \textbf{Youden's J} & \textbf{Strict mismatches (removed)}
+  & \textbf{Threshold outliers (kept)} & \textbf{Total flagged} \\
+\midrule
+Batch~01 & 0.50 (Platt-scaled) & 45 & 0 & 45 \\
+Batch~02 & 0.63 & 17 & 6 & 23 \\
+\bottomrule
+\end{longtable}
+\renewcommand{\arraystretch}{1.0}
+}
+
+This differs from the December 2025 Batch~02 QC release (v.2.1) which used
+\texttt{sex\_outlier\_mode: all}, where both strict mismatches and
+threshold-based outliers would be removed. The \texttt{strict\_only} mode
+was chosen for the cross-batch harmonisation to maximise sample retention
+whilst removing only high-confidence sex-provenance errors.
+
+%% ═════════════════════════════════════════════════════════════
+\section{Within-Batch Normalisation (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~06})}
+
+\textbf{Purpose.}\enspace Equalise the median protein expression level
+across all samples within each batch to remove systematic technical shifts.
+Performed independently per batch before cross-batch harmonisation.
+
+\textbf{Method.}\enspace Median normalisation --- for each protein, the
+sample-level median NPX is subtracted and the global batch median added
+back.
+
+\textbf{Results}:
+
+{\footnotesize
+\renewcommand{\arraystretch}{1.2}
+\begin{longtable}{p{5cm}p{3.2cm}p{3.2cm}}
+\toprule
+\textbf{Metric} & \textbf{Batch~01} & \textbf{Batch~02} \\
+\midrule
+Mean SD (before $\to$ after)  & 1.151 $\to$ 0.293 & 1.128 $\to$ 0.263 \\
+Mean MAD (before $\to$ after) & 0.876 $\to$ 0.220 & 0.896 $\to$ 0.201 \\
+Mean IQR (before $\to$ after) & 1.271 $\to$ 0.320 & 1.262 $\to$ 0.287 \\
+\textbf{Mean SD reduction}  & \textbf{74.5\%} & \textbf{76.7\%} \\
+\textbf{Mean MAD reduction} & \textbf{74.9\%} & \textbf{77.6\%} \\
+\textbf{Mean IQR reduction} & \textbf{74.8\%} & \textbf{77.3\%} \\
+\bottomrule
+\end{longtable}
+\renewcommand{\arraystretch}{1.0}
+}
+
+Both batches show $\sim$75\% reduction in within-batch variability,
+confirming effective intra-batch normalisation. No samples are removed.
+
+%% ═════════════════════════════════════════════════════════════
+\section{Cross-Batch Bridge Harmonisation (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~07})}
+
+\subsection{Bridge Sample Design}
+
+Cross-batch harmonisation relies on \textbf{bridge samples} --- individuals
+whose plasma was measured on both Batch~01 and Batch~02.
+
+\begin{itemize}
+  \item Bridge FINNGENIDs identified (labelled \texttt{Bridging} in both batches): 24
+  \item Bridge samples in Batch~01 QC-passed matrix: 23
+        (1~removed: SampleID \texttt{52291062464138167509} failed Batch~01 QC)
+  \item Bridge samples in Batch~02 QC-passed matrix: 23
+        (1~removed: failed Batch~02 QC)
+  \item \textbf{Matched bridge pairs} (present in both QC-passed matrices): \textbf{22}
+  \item Common proteins: 5,416
+  \item \textbf{Reference batch}: Batch~02 (unchanged)
+\end{itemize}
+
+\textbf{Note.}\enspace 30~FINNGENIDs are recorded as being in both batches
+in \texttt{FG\_cross\_batch\_bridging\_metadata.tsv}, but only 24 were
+labelled \texttt{sample\_type\,=\,"Bridging"} in the Batch~01 sample
+mapping. The remaining 6 were classified as regular FinnGen participants in
+Batch~01 and were not used for bridge normalisation. Of the 24 labelled
+bridging samples, 2~different individuals failed per-batch QC (one in each
+batch), leaving 22 matched pairs with NPX data in both QC-passed matrices.
+
+\subsection{Harmonisation Method --- Olink Standard Bridge Normalisation}
+
+The Olink standard bridge normalisation was applied, consistent with Olink's
+official methodology:
+
+\begin{enumerate}
+  \item For each protein $p$ and each of the 22 matched bridge sample pairs
+        $k$, compute the pairwise difference:
+    \[
+      \text{diff}_{k,p} =
+        \text{NPX}_{\text{ref}}[k, p]
+        - \text{NPX}_{\text{target}}[k, p]
+    \]
+  \item Compute the per-protein adjustment factor as the median of all
+        pairwise differences:
+    \[
+      \text{Adj\_factor}[p] =
+        \text{median}(\text{diff}_{1,p}, \ldots, \text{diff}_{22,p})
+    \]
+  \item Additive adjustment to \textbf{target batch only} (Batch~01);
+        reference (Batch~02) unchanged:
+    \[
+      \text{NPX}_{\text{B01,\,harmonised}}[p]
+        = \text{NPX}_{\text{B01}}[p] + \text{Adj\_factor}[p]
+    \]
+\end{enumerate}
+
+This additive correction is appropriate because Olink NPX values are on a
+$\log_{2}$ scale.
+
+\subsection{Method Comparison}
+
+Three cross-batch harmonisation methods were evaluated on the same input.
+\textbf{ComBat} (empirical Bayes batch correction from the \texttt{sva} R
+package) estimates and removes batch effects using a parametric empirical
+Bayes framework; it was included as a comparison method but adjusts both
+batches. \textbf{Cross-batch median} applies a global median alignment
+between batches.
+
+{\footnotesize
+\renewcommand{\arraystretch}{1.2}
+\begin{longtable}{p{4.5cm}p{3.5cm}p{4cm}}
+\toprule
+\textbf{Method} & \textbf{B01 CV reduction} & \textbf{B02 (reference)} \\
+\midrule
+\textbf{Bridge (Olink standard)} & \textbf{42.2\%} & 0\% (unchanged) \\
+ComBat (empirical Bayes) & 14.8\% & $-$21.7\% (worsened) \\
+Cross-batch median & $-$518\% (worsened) & 0\% (unchanged) \\
+\bottomrule
+\end{longtable}
+\renewcommand{\arraystretch}{1.0}
+}
+
+Bridge normalisation was selected because it achieves the largest CV
+reduction in the adjusted batch while leaving the reference batch completely
+unchanged. No samples are removed.
+
+%% ═════════════════════════════════════════════════════════════
+\section{Harmonisation Key Performance Indicator (KPI) Evaluation (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~07b})}
+
+A post-hoc quantitative evaluation of harmonisation quality was performed
+using the 22 matched bridge pairs. The KPI framework compares the
+pre-harmonisation (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~05d}) and post-harmonisation (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~07}) matrices
+across multiple distance, concordance, and biological preservation metrics
+to objectively assess whether bridge normalisation reduced inter-batch
+technical variation without degrading biological signal.
+
+\textbf{PCA configuration.}\enspace Top 20~PCs (61.1\% variance explained),
+complete-case analysis with median imputation for missingness $\leq 0.1\%$.
+
+\subsection{Bridge Pair Convergence --- Passing Metrics}
+
+{\footnotesize
+\renewcommand{\arraystretch}{1.2}
+\begin{longtable}{p{5cm}p{2.2cm}p{2.2cm}p{1.5cm}p{1.3cm}}
+\toprule
+\textbf{Metric} & \textbf{Pre} & \textbf{Post} & \textbf{Target} & \textbf{Result} \\
+\midrule
+Median bridge Euclidean dist.      & 50.13 & 38.84 & Decrease & PASS \\
+Median bridge Mahalanobis dist.    & 11.14 & 7.16  & Decrease & PASS \\
+Median bridge MAD-whitened (primary) & 8.73 & 6.46 & Decrease & PASS \\
+Paired log-ratio median            & ---   & $-$0.362 & Negative & PASS \\
+95\% CI upper bound                & ---   & $-$0.291 & $< 0$    & PASS \\
+CI excludes zero                   & ---   & TRUE  & TRUE     & PASS \\
+Wilcoxon $p$ (post $<$ pre)        & ---   & $3 \times 10^{-6}$ & $< 0.05$ & PASS \\
+\bottomrule
+\end{longtable}
+\renewcommand{\arraystretch}{1.0}
+}
+
+The primary metric (MAD-whitened distance) decreased from 8.73 to 6.46
+(26\% reduction, $p = 3 \times 10^{-6}$).
+
+\subsection{Noise Floor Analysis}
+
+The noise floor establishes a lower bound on the distance expected between
+two measurements of the same individual, even without any inter-batch
+technical variation. It is computed from within-batch replicate pairs ---
+individuals measured more than once within the same batch --- using the
+median absolute deviation (MAD) of their pairwise Euclidean distances in PC
+space. If bridge normalisation is working correctly, the post-harmonisation
+bridge pair distance should approach this within-batch replicate noise.
+
+{\footnotesize
+\renewcommand{\arraystretch}{1.2}
+\begin{longtable}{p{7cm}r}
+\toprule
+\textbf{Metric} & \textbf{Value} \\
+\midrule
+Within-batch replicate noise (MAD) & 7.24 \\
+Post-harmonisation bridge pair distance (MAD-whitened) & 6.46 \\
+\textbf{Noise floor ratio} (bridge post\,/\,replicate noise) & \textbf{0.89} \\
+\bottomrule
+\end{longtable}
+\renewcommand{\arraystretch}{1.0}
+}
+
+A noise floor ratio close to 1.0 indicates that post-harmonisation bridge
+pair distances are approximately equal to the irreducible technical
+measurement noise. The observed ratio of 0.89 confirms that the bridge
+normalisation has brought cross-batch differences down to (or slightly below)
+the level of within-batch replicate variation --- the best achievable result.
+
+\subsection{Biological Signal Preservation}
+
+\begin{itemize}
+  \item Sex variance fraction (median): $6 \times 10^{-4}$ (pre)
+        $\to$ $6 \times 10^{-4}$ (post) --- \textbf{stable}
+  \item Sex prediction accuracy: 0.596 $\to$ 0.596 --- \textbf{stable}
+\end{itemize}
+
+\textbf{Note to analysts.}\enspace KPI metrics should be interpreted as a
+global characterisation of harmonisation quality (22 bridge pairs) rather
+than a per-sample assessment.
+
+%% ═════════════════════════════════════════════════════════════
+\section{Covariate Adjustment (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~08})}
+
+Covariate adjustment was performed independently per batch using linear
+regression ($\text{NPX} \sim \text{age} + \text{sex}$). Model residuals
+(plus protein grand mean) replace original NPX values. Proteomic PCs
+(pPC1--10) were \textbf{evaluated but NOT used} in the adjustment.
+
+{\footnotesize
+\renewcommand{\arraystretch}{1.2}
+\begin{longtable}{p{6cm}p{3cm}p{3cm}}
+\toprule
+\textbf{Parameter} & \textbf{Batch~01} & \textbf{Batch~02} \\
+\midrule
+Input samples & 1,957 & 2,458 \\
+Samples with complete covariates & 1,447 (73.9\%) & 1,545 (62.9\%) \\
+Samples excluded for age $\leq 20$ (age analyses only) & 13 & 60 \\
+Output samples & 1,957 & 2,458 \\
+\bottomrule
+\end{longtable}
+\renewcommand{\arraystretch}{1.0}
+}
+
+
+%% ═════════════════════════════════════════════════════════════
+\section{Phenotype Preparation and Sample Reconciliation (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~09})}
+
+\subsection{Sample ID Conversion and Outlier Reconciliation}
+
+{\footnotesize
+\renewcommand{\arraystretch}{1.2}
+\begin{longtable}{p{2.5cm}p{2cm}p{2.5cm}p{3cm}}
+\toprule
+\textbf{Batch} & \textbf{Input} & \textbf{Outlier recon.}
+  & \textbf{After conversion} \\
+\midrule
+Batch~01 & 1,957 & $-$2  & 1,955 \\
+Batch~02 & 2,458 & $-$10 & 2,448 \\
+\bottomrule
+\end{longtable}
+\renewcommand{\arraystretch}{1.0}
+}
+
+\textbf{Bridging sample FINNGENID recovery.}\enspace The Batch~02 QC-passed
+matrix contains 50 cross-batch bridging samples measured under EA5 tube
+identifiers (\texttt{EA5\_OLI\_} SampleIDs). The pipeline's \href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~00} sample
+mapping did not resolve these EA5-format SampleIDs to FINNGENIDs
+automatically. Because these are genuine FinnGen participants with known
+FINNGENIDs (recorded in
+\texttt{FG\_cross\_batch\_bridging\_metadata.tsv}), we recovered their
+identities by mapping each \texttt{EA5\_OLI\_} SampleID against the
+\texttt{PSEUDO\_ID\_Batch\_00} column in that file and re-indexed them by
+FINNGENID. All 50 bridging samples are now present in the FINNGENID-indexed
+pre-kinship matrices under their correct FINNGENIDs.
+
+\subsection{Duplicate FINNGENID Selection}
+
+Some FINNGENIDs are associated with multiple Olink SampleIDs (technical
+replicates --- the same individual measured more than once). To produce a
+matrix with exactly one measurement per individual, the pipeline selects the
+single highest-quality SampleID for each duplicated FINNGENID using a
+deterministic hierarchical criterion: (1)~lowest missing rate, (2)~highest
+number of detected proteins, (3)~lowest SD~NPX, (4)~lexicographically first
+SampleID. The remaining lower-quality replicates are excluded.
+
+\begin{itemize}
+  \item Batch~01: 22 duplicate groups ($-$22 replicates excluded)
+  \item Batch~02: 130 duplicate groups ($-$130 replicates excluded)
+\end{itemize}
+
+\subsection{Cross-Batch Overlap Resolution}
+
+When the two per-batch FINNGENID matrices are combined into a single
+aggregate, some FINNGENIDs appear in both Batch~01 and Batch~02. These
+overlapping individuals fall into two distinct categories:
+
+\begin{enumerate}
+  \item \textbf{FinnGen participants measured independently in both batches}
+        (35~individuals) --- these are regular FinnGen samples whose plasma
+        was processed in both experimental runs. They are not bridging
+        samples; their presence in both batches is coincidental (e.g.\@ the
+        same biobank participant's sample was included in two separate Olink
+        runs).
+  \item \textbf{Bridging samples measured in both batches by design}
+        (6~individuals) --- these are the subset of the 30 cross-batch
+        bridging FINNGENIDs (from
+        \texttt{FG\_cross\_batch\_bridging\_metadata.tsv}) whose Batch~01
+        SampleIDs were classified as regular FinnGen samples
+        (\texttt{sample\_type\,=\,"FinnGen"}) rather than
+        \texttt{"Bridging"} in the Batch~01 sample mapping. They were not
+        used for bridge normalisation in
+        \href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~07},
+        but they do have measurements in both batches.
+\end{enumerate}
+
+For all 41 overlapping FINNGENIDs, the \textbf{Batch~02 measurement is
+retained} in the aggregate (Batch~02 is the reference batch for bridge
+normalisation); the corresponding Batch~01 measurement is excluded. This
+prevents duplicate rows for the same individual in the aggregate matrix.
+
+\subsection{Residual Batch Adjustment}
+\label{sec:residual_batch}
+
+The primary inter-batch harmonisation is performed by bridge normalisation in
+\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~07}. However, after aggregating the two batches, a small residual linear
+batch signal may remain for some proteins. To address this, an additional
+per-protein linear adjustment was applied on the combined aggregate matrix:
+
+\[
+  \text{lm}(\text{NPX} \sim \text{batch})
+\]
+
+The model residuals (plus the protein grand mean) replace the original
+values. This removes only the linear component of any remaining batch
+signal; it does not replace or repeat the bridge normalisation, which
+operates at the individual bridge-sample level.
+
+\textbf{Batch $R^{2}$ statistics} (per-protein $R^{2}$ from the
+batch-effect model before adjustment):
+
+\begin{itemize}
+  \item Median batch $R^{2}$: \textbf{0.020}
+  \item Mean batch $R^{2}$: 0.057
+  \item Proteins with $R^{2} > 0.10$: 18.5\% (1,002\,/\,5,416)
+  \item Proteins with $R^{2} > 0.50$: 0.7\% (38\,/\,5,416)
+\end{itemize}
+
+The low median $R^{2}$ (0.02) confirms that bridge normalisation (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~07})
+already removed the majority of the inter-batch technical signal; this
+additional adjustment addresses the residual tail.
+
+%% ═════════════════════════════════════════════════════════════
+\section{Kinship Filtering (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~10})}
+
+\textbf{Threshold.}\enspace KING coefficient $\geq 0.0884$ (2nd-degree
+relationships and closer: parent-offspring, full siblings, half-siblings,
+grandparent-grandchild).
+
+\textbf{Within-batch kinship filtering}
+(\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~10}
+of the pipeline):
+
+{\footnotesize
+\renewcommand{\arraystretch}{1.2}
+\begin{longtable}{p{2.5cm}p{3.5cm}p{2.5cm}p{3cm}}
+\toprule
+\textbf{Batch} & \textbf{Related pairs}
+  & \textbf{Removed} & \textbf{Unrelated} \\
+\midrule
+Batch~01 & 16 (13 1st + 3 2nd) & 16 & 1,882 \\
+Batch~02 & 7 (4 1st + 3 2nd)   & 7  & 2,262 \\
+\bottomrule
+\end{longtable}
+\renewcommand{\arraystretch}{1.0}
+}
+
+\textbf{Cross-batch kinship filtering} (post-hoc, applied to the combined
+aggregate):
+
+After combining the per-batch kinship-filtered matrices, 27 cross-batch
+related pairs (Kinship $\geq 0.0884$) were identified
+(9~parent-offspring, 5~full-sibling, 13~second-degree). For each pair, the
+Batch~01 sample was removed (Batch~02 measurement retained). One Batch~01
+individual appeared in two separate cross-batch pairs; removing that single
+sample resolved both pairs simultaneously, hence 27~pairs are resolved by
+26~unique removals. All 26 removed samples originated from Batch~01.
+
+{\footnotesize
+\renewcommand{\arraystretch}{1.2}
+\begin{longtable}{p{5cm}p{3cm}p{3cm}}
+\toprule
+\textbf{Stage} & \textbf{Removed} & \textbf{Unrelated} \\
+\midrule
+Within-batch (B01 + B02) & 23 & 4,144 \\
+Cross-batch & 26 & \textbf{4,118} \\
+\textbf{Total kinship removals} & \textbf{49} & \textbf{4,118} \\
+\bottomrule
+\end{longtable}
+\renewcommand{\arraystretch}{1.0}
+}
+
+%% ═════════════════════════════════════════════════════════════
+\section{Rank Normalisation (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~11})}
+
+Inverse rank normalisation (IRN) applied column-wise per protein.
+
+{\footnotesize
+\renewcommand{\arraystretch}{1.2}
+\begin{longtable}{p{5cm}p{3cm}p{3cm}}
+\toprule
+\textbf{Metric} & \textbf{Batch~01} & \textbf{Batch~02} \\
+\midrule
+Samples                      & 1,882  & 2,262 \\
+Proteins                     & 5,416  & 5,416 \\
+Mean skewness (before IRN)   & 0.944  & 0.815 \\
+Mean skewness (after IRN)    & 0.000  & 0.000 \\
+Mean kurtosis (before IRN)   & 9.571  & 7.196 \\
+Mean kurtosis (after IRN)    & 2.984  & 2.986 \\
+\bottomrule
+\end{longtable}
+\renewcommand{\arraystretch}{1.0}
+}
+
+\textbf{Aggregate}: 4,118~samples $\times$ 5,416~proteins = 22,303,288
+measurements.
+
+%% ═════════════════════════════════════════════════════════════
+\section{Disease Group Summary}
+
+Summary of disease groups across the two key release matrices. Groups are
+assigned based on available metadata; samples without disease information but
+confirmed as FinnGen bridging samples are labelled ``Bridging''.
+
+\subsection{Pre-Kinship Aggregate (4,360 rows)}
+
+This matrix contains all measurements before kinship filtering and duplicate
+resolution. Counts represent rows (SampleIDs), not unique individuals.
+
+{\footnotesize
+\renewcommand{\arraystretch}{1.2}
+\begin{longtable}{p{4.5cm}r r r}
+\toprule
+\textbf{Disease Group} & \textbf{Batch~01} & \textbf{Batch~02} & \textbf{Aggregate} \\
+\midrule
+Blood\_Donor & 1,108 & 394 & 1,480 \\
+Kidney & 234 & 657 & 886 \\
+Variant\_carriers & 380 & 11 & 383 \\
+Parkinsons & 0 & 335 & 335 \\
+Rheuma & 0 & 260 & 259 \\
+IBD & 228 & 8 & 229 \\
+AMD & 0 & 162 & 162 \\
+Chromosomal\_Abnormalities & 0 & 153 & 153 \\
+Metabolic & 0 & 133 & 133 \\
+MFGE8 & 0 & 117 & 117 \\
+F64 & 0 & 61 & 61 \\
+Kids & 0 & 53 & 53 \\
+Pulmo & 0 & 46 & 46 \\
+Bridging & 0 & 43 & 43 \\
+Multiple\_Diseases & 5 & 15 & 20 \\
+\textbf{Total} & \textbf{1,955} & \textbf{2,448} & \textbf{4,360} \\
+\bottomrule
+\end{longtable}
+\renewcommand{\arraystretch}{1.0}
+}
+
+\textbf{Note}: The Aggregate column differs from Batch~01 $+$ Batch~02 because
+cross-batch overlap resolution removes 41 Batch~01 rows (FINNGENIDs present
+in both batches keep the Batch~02 measurement). The ``Bridging'' group
+consists of the 43 cross-batch bridge samples in Batch~02 that do not have
+FinnGen phenotype metadata.
+
+\subsection{Final pQTL Aggregate (4,118 unique FINNGENIDs)}
+
+This matrix is deduplicated (one measurement per FINNGENID) and
+kinship-filtered (unrelated individuals only). Batch origin is determined by
+cross-batch overlap resolution: FINNGENIDs present in both batches use the
+Batch~02 measurement.
+
+{\footnotesize
+\renewcommand{\arraystretch}{1.2}
+\begin{longtable}{p{4cm}r r r r}
+\toprule
+\textbf{Disease Group} & \textbf{Batch~01} & \textbf{Batch~02}
+  & \textbf{Total} & \textbf{\%} \\
+\midrule
+Blood\_Donor & 1,057 & 391 & 1,448 & 35.2\% \\
+Kidney & 228 & 653 & 881 & 21.4\% \\
+Variant\_carriers & 363 & 10 & 373 & 9.1\% \\
+Parkinsons & 0 & 334 & 334 & 8.1\% \\
+Rheuma & 0 & 235 & 235 & 5.7\% \\
+IBD & 197 & 7 & 204 & 5.0\% \\
+AMD & 0 & 160 & 160 & 3.9\% \\
+Chromosomal\_Abnormalities & 0 & 149 & 149 & 3.6\% \\
+MFGE8 & 0 & 116 & 116 & 2.8\% \\
+Metabolic & 0 & 67 & 67 & 1.6\% \\
+F64 & 0 & 60 & 60 & 1.5\% \\
+Kids & 0 & 53 & 53 & 1.3\% \\
+Pulmo & 0 & 23 & 23 & 0.6\% \\
+Multiple\_Diseases & 5 & 10 & 15 & 0.4\% \\
+\textbf{Total} & \textbf{1,876} & \textbf{2,268}
+  & \textbf{4,118} & \textbf{100\%} \\
+\bottomrule
+\end{longtable}
+\renewcommand{\arraystretch}{1.0}
+}
+
+%% ═════════════════════════════════════════════════════════════
+\section{Overall Sample Flow Summary}
+
+\begin{tcolorbox}[colback=white,colframe=black,boxrule=1pt]
+{\scriptsize
+\begin{verbatim}
+=================================================================
+ BATCH 01 post-QC (Step 05d):  1,957 samples x 5,440 proteins
+ BATCH 02 post-QC (Step 05d):  2,458 samples x 5,416 proteins
+ Combined QC-passed (union):    4,415 samples
+=================================================================
+
+  Step 06: Within-batch median normalisation  -> no sample change
+  Step 07: Cross-batch bridge harmonisation   -> no sample change
+  Step 08: Covariate adjustment (age, sex)    -> no sample change
+
+  STEP 09: Phenotype preparation & reconciliation
+     Batch 01 - Outlier reconciliation:              -2
+     Batch 01 - Duplicate FINNGENID selection:      -22
+     Batch 01 - Cross-batch overlap (-> Batch 02):  -41
+     Batch 02 - Outlier reconciliation:             -10
+     Batch 02 - Bridging EA5->FINNGENID recovery:   +0 (50 re-indexed)
+     Batch 02 - Duplicate FINNGENID selection:     -130
+     Net removed in Step 09:                       -205
+     Pre-kinship aggregate (incl. bridging):   4,360 samples
+
+  STEP 10: Within-batch kinship filtering (KING >= 0.0884)
+     Batch 01 - Related samples removed:            -16
+     Batch 02 - Related samples removed:             -7
+     After within-batch kinship:               4,144 samples
+
+  Cross-batch kinship filtering (post-hoc, KING >= 0.0884)
+     Cross-batch related pairs identified:          27
+     Unique B01 samples removed:                   -26  (1 ind. in 2 pairs)
+     After cross-batch kinship:                4,118 samples
+
+  Step 11: Inverse rank normalisation         -> no sample change
+
+=================================================================
+ AGGREGATE FINAL (batch-corrected, fully unrelated,
+ rank-normalised):             4,118 samples x 5,416 proteins
+=================================================================
+ Total kinship removals:             49 (23 within + 26 cross)
+ Total samples removed:             297 (6.7% of 4,415)
+ Final retention rate:             93.3% (4,118 / 4,415)
+=================================================================
+\end{verbatim}
+}
+\end{tcolorbox}
+
+\subsection{Complete Attrition Breakdown}
+
+{\footnotesize
+\renewcommand{\arraystretch}{1.2}
+\begin{longtable}{p{2cm}p{6.5cm}r r}
+\toprule
+\textbf{Batch} & \textbf{Removal reason}
+  & \textbf{N removed} & \textbf{Cumulative} \\
+\midrule
+Batch~01 & \href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~09} outlier reconciliation & 2 & 2 \\
+Batch~01 & Duplicate FINNGENID selection & 22 & 24 \\
+Batch~01 & Cross-batch overlap resolved to Batch~02 & 41 & 65 \\
+Batch~01 & Within-batch kinship removal & 16 & 75 \\
+Batch~02 & \href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~09} outlier reconciliation & 10 & 85 \\
+Batch~02 & Bridging EA5$\to$FINNGENID recovery & 0 (re-indexed) & 85 \\
+Batch~02 & Duplicate FINNGENID selection & 130 & 215 \\
+Batch~02 & Within-batch kinship removal & 7 & 222 \\
+\midrule
+Batch~01 & Cross-batch kinship removal (27 pairs, 1 ind.\ in 2 pairs) & 26 & 248 \\
+\textbf{Total removed} & & \textbf{248} & \\
+\bottomrule
+\end{longtable}
+\renewcommand{\arraystretch}{1.0}
+}
+
+Full sample IDs: \texttt{removed\_221\_full\_id\_details.tsv} and
+\texttt{removed\_221\_breakdown\_summary.tsv}.
+
+%% ═════════════════════════════════════════════════════════════
+\section{Processing Thresholds Summary}
+\label{sec:thresholds}
+
+{\footnotesize
+\renewcommand{\arraystretch}{1.1}
+\begin{longtable}{p{2.2cm}p{4.5cm}p{5cm}}
+\toprule
+\textbf{Step} & \textbf{Parameter / Value} & \textbf{Rationale} \\
+\midrule
+\textbf{\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~06}} & Median normalisation
+  & Standard intra-batch Olink preprocessing \\
+\textbf{\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~07}} & Olink standard bridge
+  & Best CV reduction; reference unchanged \\
+\textbf{\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~07}} & Reference: Batch~02
+  & Larger sample size; pQTL reference \\
+\textbf{\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~07}} & Min bridge pairs $\geq 10$
+  & Olink guideline \\
+\textbf{\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~07}} & 22 bridge pairs used
+  & 24 identified, 2 removed by QC \\
+\textbf{\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~08}} & Covariates: age, sex
+  & Standard GWAS adjustment \\
+\textbf{\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~08}} & Linear regression, residual-based
+  & Mean-preserved adjustment \\
+\textbf{\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~09}} & \texttt{lm(NPX $\sim$ batch)} per protein
+  & Removes residual linear batch effect \\
+\textbf{\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~09}} & Duplicate: quality-based
+  & Missing rate $\to$ N proteins $\to$ SD $\to$ ID \\
+\textbf{\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~09}} & Overlap: Batch~02 retained
+  & Consistent with reference batch \\
+\textbf{\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~10}} & KING $\geq 0.0884$
+  & 3rd degree (standard GWAS threshold) \\
+\textbf{\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~11}} & IRN (per protein)
+  & Standard normal phenotypes for LMM GWAS \\
+\bottomrule
+\end{longtable}
+\renewcommand{\arraystretch}{1.0}
+}
+
+%% ═════════════════════════════════════════════════════════════
+\section{Detailed File Formats and Specifications}
+\label{sec:detailed_formats}
+
+\subsection{Aggregate Rank-Normalised PLINK File}
+
+\textbf{File}: \texttt{npx\_aggregate\_rank\_normalised\allowbreak\_unrelated\_4118\_samples.pheno}
+
+\begin{itemize}
+  \item Tab-separated PLINK phenotype file
+  \item \textbf{Column~1}: \texttt{FID} (same as FINNGENID)
+  \item \textbf{Column~2}: \texttt{IID} (FINNGENID)
+  \item \textbf{Columns 3--5,418}: 5,416 protein columns
+  \item \textbf{Dimensions}: 4,145~rows
+        (1~header + 4,118~samples) $\times$ 5,418~columns
+  \item \textbf{Values}: Inverse rank-normalised NPX
+        (mean~$\approx 0$, SD~$\approx 1$ per protein)
+  \item \textbf{Missing}: \texttt{NA}
+\end{itemize}
+
+\textbf{Use case.}\enspace Direct input to \texttt{plink --pheno}.
+
+\subsection{Aggregate Rank-Normalised RDS Matrix}
+
+\textbf{File}: \texttt{npx\_aggregate\_rank\_normalised\allowbreak\_unrelated\_4118\_samples.rds}
+
+\begin{itemize}
+  \item R matrix (RDS); row names = FINNGENIDs, column names = proteins
+  \item 4,118 $\times$ 5,416
+\end{itemize}
+
+\subsection{Protein Index}
+
+\texttt{protein\_list\_5416.txt} --- one protein per line, 5,416 lines.
+
+\subsection{Sample List}
+
+\texttt{sample\_list\_aggregate\_unrelated\_4118.txt} --- one FINNGENID per
+line, 4,118 lines.
+
+\subsection{Pre-kinship Batch-Corrected Matrix}
+
+\texttt{npx\_aggregate\_batch\_corrected\allowbreak\_prekinship\_4360\_samples.rds}
+
+R matrix (RDS), FINNGENID-indexed. 4,360 $\times$ 5,416. Batch-corrected,
+covariate-adjusted NPX (not rank-normalised). Includes the 50 recovered
+bridging FINNGENIDs.
+
+\subsection{Batch $R^{2}$ Diagnostics}
+
+\texttt{batch\_r2\_diagnostics.tsv} --- 5,417~rows (header + 5,416
+proteins); columns \texttt{protein} and \texttt{r2\_batch}.
+
+%% ═════════════════════════════════════════════════════════════
+\section{Notes}
+
+\begin{enumerate}
+
+\item \textbf{Protein panel}: 5,416 biological proteins (24 control probes
+  in Batch~01 excluded from all aggregate outputs).
+
+\item \textbf{Sex outlier mode}: \texttt{strict\_only}. TIER~1 strict
+  mismatches removed; TIER~2 threshold-based outliers retained. Batch~01
+  Youden's J\,=\,0.50 (Platt-scaled); Batch~02\,=\,0.63.
+
+\item \textbf{Kinship filtering}: Kinship filtering was applied in two
+  stages using the KING kinship coefficient (threshold $\geq 0.0884$,
+  capturing 2nd-degree relationships and closer). First, within-batch
+  filtering (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~10})
+  removed 23 related pairs (16 from Batch~01, 7 from Batch~02). Second, a
+  post-hoc cross-batch kinship filter was applied to the combined aggregate
+  using \texttt{finngen\_R13.kin0}, identifying 27 cross-batch related pairs
+  (9~parent-offspring, 5~full-sibling, 13~second-degree) and removing
+  26~Batch~01 samples (Batch~02 measurements retained). One Batch~01
+  individual appeared in two separate cross-batch pairs; removing that single
+  sample resolved both pairs simultaneously, hence 27~pairs are resolved by
+  26~removals. The final 4,118-sample aggregate contains \textbf{zero related
+  pairs} at Kinship $\geq 0.0884$.
+
+\item \textbf{Duplicate FINNGENIDs}: Pre-kinship matrices preserve all
+  technical replicates (same FINNGENID, different SampleIDs). \href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~10} (kinship
+  filtering) selects the highest-quality measurement per FINNGENID using:
+  lowest missing rate $\to$ most detected proteins $\to$ lowest SD~NPX $\to$
+  lexicographic SampleID. The final 4,118-sample aggregate contains one row
+  per unique FINNGENID.
+
+\item \textbf{Covariate adjustment}: Samples missing covariate data retain
+  unadjusted NPX. Complete-covariate fractions: 73.9\% (B01), 62.9\% (B02).
+
+\item \textbf{Bridge sample recovery}: The 50 bridging samples in Batch~02
+  (EA5\_OLI\_ SampleIDs) have been re-indexed to FINNGENIDs using
+  \texttt{FG\_cross\_batch\_bridging\_metadata.tsv} and are present in the
+  pre-kinship matrices alongside all other measurements. Duplicate FINNGENIDs
+  (including bridging samples with P-format SampleIDs) are preserved; resolution
+  to one measurement per individual occurs in \href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~10}.
+
+\item \textbf{Batch $R^{2}$}: Median 0.02 (low), confirming bridge
+  normalisation (\href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~07}) already removed the majority of inter-batch signal;
+  the residual batch adjustment in \href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline#pipeline-steps}{Step~09} addresses the remaining tail.
+  The 0.7\% of proteins with $R^{2} > 0.50$ warrant targeted review.
+
+
+\item \textbf{Missing data}: Batch~01 final: 0.01\% missing. Batch~02: 0\%.
+
+\item \textbf{Cross-batch overlap}: 41 FINNGENIDs (35 FinnGen + 6 bridging)
+  resolved to Batch~02 in all aggregates.
+
+\item \textbf{LOD filtering}: 3,075/5,416 proteins (56.8\%) have
+  $\leq 90\%$ of samples below LOD. The remaining 2,341 proteins should be
+  treated with caution. Full per-protein LOD summary provided
+  (\texttt{lod\_nc\_summary\_batch02.tsv}); e.g.\@ a 50\% threshold yields
+  2,102 assays.
+
+\end{enumerate}
+
+\vspace{0.5cm}
+\noindent\rule{\linewidth}{0.4pt}
+\vspace{0.3cm}
+
+\noindent
+\begin{tabular}{@{} r @{\quad} l @{}}
+\textbf{Pipeline Version}  & \pipelinelink{} v1.7.1 (February 2026) \\
+\textbf{Production Run}    & Executed 16--18 February 2026 \\
+\textbf{Data Release}      & FG3 Batch~01 + Batch~02 Cross-Batch Harmonised Aggregate \\
+\textbf{Final Sample Count} & 4,118~samples $\times$ 5,416~proteins \\
+\textbf{Prepared by}        & Reza Jabal, PhD --- Broad Institute of MIT and Harvard \\
+\end{tabular}
+
+\end{document}
