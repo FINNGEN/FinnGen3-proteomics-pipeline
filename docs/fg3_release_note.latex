@@ -1,0 +1,107 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{tcolorbox}
+\usepackage{fancyvrb}
+\usepackage{calc}          % pandoc longtable column widths use \real{}
+\usepackage{textcomp}
+\usepackage{newunicodechar}
+
+% Glyphs used in the release notes that are absent from the T1 text fonts
+\newunicodechar{≤}{\ensuremath{\leq}}
+\newunicodechar{≥}{\ensuremath{\geq}}
+\newunicodechar{×}{\ensuremath{\times}}
+\newunicodechar{→}{\ensuremath{\rightarrow}}
+\newunicodechar{−}{\ensuremath{-}}
+\newunicodechar{≈}{\ensuremath{\approx}}
+\newunicodechar{↔}{\ensuremath{\leftrightarrow}}
+\newunicodechar{λ}{\ensuremath{\lambda}}
+\newunicodechar{σ}{\ensuremath{\sigma}}
+\newunicodechar{µ}{\ensuremath{\mu}}
+\newunicodechar{√}{\ensuremath{\surd}}
+\newunicodechar{─}{-}
+\newunicodechar{│}{|}
+\newunicodechar{┌}{+}\newunicodechar{┐}{+}\newunicodechar{└}{+}\newunicodechar{┘}{+}
+\newunicodechar{├}{+}\newunicodechar{┤}{+}\newunicodechar{┬}{+}\newunicodechar{┴}{+}\newunicodechar{┼}{+}
+\newunicodechar{═}{=}
+\newunicodechar{║}{|}
+\newunicodechar{╔}{+}\newunicodechar{╗}{+}\newunicodechar{╚}{+}\newunicodechar{╝}{+}
+\newunicodechar{╠}{+}\newunicodechar{╣}{+}\newunicodechar{╦}{+}\newunicodechar{╩}{+}\newunicodechar{╬}{+}
+\newunicodechar{↓}{\ensuremath{\downarrow}}
+\newunicodechar{✓}{\checkmark}
+
+% Set margins
+\geometry{margin=1in}
+
+% Footer setup
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot[L]{$if(footer-left)$$footer-left$$else$FG3 Proteomics Release Note$endif$}
+\fancyfoot[R]{\thepage}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0.4pt}
+
+% Hyperref setup
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,
+    urlcolor=cyan,
+}
+
+% Code highlighting
+\lstset{
+    basicstyle=\ttfamily\footnotesize,
+    breaklines=true,
+    captionpos=b,
+    numbers=left,
+    numberstyle=\tiny,
+    frame=single,
+    backgroundcolor=\color{gray!10}
+}
+
+% Verbatim blocks (used for the sample-flow funnel) shrink to fit the text block
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{fontsize=\footnotesize,commandchars=\\\{\}}
+\DefineVerbatimEnvironment{verbatim}{Verbatim}{fontsize=\footnotesize}
+
+% pandoc scaffolding
+\providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\providecommand{\pandocbounded}[1]{#1}
+$if(highlighting-macros)$
+$highlighting-macros$
+$endif$
+
+\title{$title$}
+\date{}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+\vspace{4cm}
+
+$if(cover)$
+$cover$
+$endif$
+
+\newpage
+\tableofcontents
+\newpage
+
+$body$
+
+\end{document}
