@@ -404,9 +404,27 @@ create_sample_mapping <- function(sample_ids, metadata, bridging_samples = NULL,
               log_info("Identified {length(bridging_finngenids)} bridging samples for batch_02 (present in both batch_01 and batch_02)")
             }
           }
+        } else {
+          # Generic path for any batch other than 01/02 (batch_03 onward).
+          # The two branches above encode a pair-specific rule - samples in BOTH batch_01 and batch_02,
+          # excluding EA5 (in_Batch_00), because EA5 bridges Batch_00 to Batch_02 rather than
+          # Batch_01 to Batch_02. That rule does not generalise, so for any other batch take
+          # membership from this batch's own in_Batch_<NN> flag.
+          flag_col <- paste0("in_Batch_", sub("^batch_", "", batch_id))
+          if (flag_col %in% names(bridging_samples)) {
+            is_true <- bridging_samples[[flag_col]] == TRUE |
+                       bridging_samples[[flag_col]] == "TRUE" |
+                       bridging_samples[[flag_col]] == "T"
+            is_true[is.na(is_true)] <- FALSE
+            bridging_finngenids <- unique(bridging_samples[is_true]$FINNGENID)
+            log_info("Identified {length(bridging_finngenids)} bridging FINNGENIDs for {batch_id} via {flag_col}")
+          } else {
+            log_warn(paste0("Bridging metadata has no ", flag_col,
+                            " column; no bridging samples identified for ", batch_id))
+          }
         }
       } else {
-        # If batch_id not provided, use all bridging samples
+        # batch_id not supplied: fall back to every bridging sample in the table
         bridging_finngenids <- unique(bridging_samples$FINNGENID)
         log_info("Identified {length(bridging_finngenids)} total bridging samples (batch_id not specified)")
       }
