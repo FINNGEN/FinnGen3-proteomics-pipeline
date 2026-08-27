@@ -49,7 +49,7 @@ O <- function(...) file.path(OUT, ...)
 # script is re-runnable: it always READS the untouched originals and WRITES the
 # harmonised versions. Created by hand before the first run; recreated here if
 # absent so a fresh checkout still behaves.
-PRIS <- file.path(REL, ".pre_00e_pristine")
+PRIS <- file.path(dirname(REL), "05.audit_evidence_pre_00e")
 Rin <- function(fn) { p <- file.path(PRIS, fn); if (file.exists(p)) p else file.path(REL, fn) }
 
 say <- function(...) cat(sprintf(...), "\n", sep = "")
@@ -76,6 +76,14 @@ tcmb <- readRDS(O("outliers/02_technical_outliers_combined.rds"))
 pca  <- readRDS(O("outliers/01_pca_outliers_original.rds"))
 sxp  <- fread(O("outliers/04_sex_predictions.tsv"), colClasses = list(character = "SAMPLE_ID"))
 pqs  <- fread(O("outliers/05b_05b_pqtl_stats.tsv"), colClasses = list(character = "FINNGENID"))
+
+# The four QC_pqtl_* metric columns shipped 0-populated in all three metadata
+# artefacts although the release note documents them (audit finding H1). The
+# statistics exist per FINNGENID in 05b_pqtl_stats.tsv; join them back.
+pq_cols <- intersect(c("MeanAbsZ", "MedianAbsZ", "MaxAbsZ", "MedianAbsResidual", "N_Prots", "N_ValidResiduals"),
+                     names(pqs))
+say("   pQTL stat columns available: %s", paste(pq_cols, collapse = ", "))
+pq_map <- unique(pqs, by = "FINNGENID")
 
 keep <- function(v) intersect(unique(as.character(v[nz(v)])), dm$SAMPLE_ID)
 tech <- list(plate            = keep(plt$samples_from_outlier_plates),
@@ -170,6 +178,16 @@ for (cn in setdiff(names(ev), "SAMPLE_ID")) {
         min(v, na.rm = TRUE), max(v, na.rm = TRUE))
 }
 
+fill_pqtl <- function(dt, fgid_col = "FINNGENID") {
+  m <- match(dt[[fgid_col]], pq_map$FINNGENID)
+  pick <- function(cands) { h <- intersect(cands, names(pq_map)); if (length(h)) pq_map[[h[1]]][m] else NA }
+  dt[, QC_pqtl_mean_abs_z          := pick(c("MeanAbsZ", "mean_abs_z"))]
+  dt[, QC_pqtl_max_abs_z           := pick(c("MaxAbsZ", "max_abs_z"))]
+  dt[, QC_pqtl_median_abs_residual := pick(c("MedianAbsResidual", "median_abs_residual"))]
+  dt[, QC_pqtl_n_prots             := pick(c("N_Prots", "n_prots"))]
+  dt
+}
+
 # --------------------------------------------------------------------------
 # 4. Fix A + C: comprehensive outliers list
 # --------------------------------------------------------------------------
@@ -179,6 +197,18 @@ ol <- fread(Rin(sprintf("comprehensive_outliers_list_%s.tsv", SUF)),
 stopifnot(nrow(ol) == 263)
 say("   before: DISEASE_GROUP non-empty = %d of %d", sum(nz(ol$DISEASE_GROUP)), nrow(ol))
 
+# (H8) The same blanked-identity defect as D-34: FINNGENID and BIOBANK_PLASMA are
+# empty for the 5 initial-QC failures in the outliers list too. Repair from the
+# authoritative delivery metadata.
+for (cn in c("FINNGENID", "BIOBANK_PLASMA")) {
+  src <- if (cn == "BIOBANK_PLASMA") dm$BIOBANK else dm[[cn]]
+  bad <- !nz(ol[[cn]])
+  if (any(bad)) {
+    ol[[cn]][bad] <- as.character(src)[match(ol$SampleID, dm$SAMPLE_ID)][bad]
+    say("   repaired blank %s on %d outlier rows", cn, sum(bad))
+  }
+}
+ol <- fill_pqtl(ol)
 ol[, DISEASE_GROUP := ss$Sample_set[match(SampleID, ss$SAMPLE_ID)]]
 ol[, Sample_set := DISEASE_GROUP]
 ol[, Sample_set_source := ss$Sample_set_source[match(SampleID, ss$SAMPLE_ID)]]
@@ -219,6 +249,7 @@ qa[, (b0) := NULL]
 # trap. Rename it explicitly. It stays in the file; only the name changes.
 if ("Disease_Group" %in% names(qa))        setnames(qa, "Disease_Group", "Disease_Group_registry_derived")
 if ("Disease_Group_source" %in% names(qa)) setnames(qa, "Disease_Group_source", "Disease_Group_registry_source")
+qa <- fill_pqtl(qa)
 qa[, Sample_set        := ss$Sample_set[match(SAMPLE_ID, ss$SAMPLE_ID)]]
 qa[, Sample_set_source := ss$Sample_set_source[match(SAMPLE_ID, ss$SAMPLE_ID)]]
 qa[, DISEASE_GROUP     := Sample_set]
@@ -250,7 +281,14 @@ dmo[is.na(N_Methods), N_Methods := 0L]
 dmo[, Detection_Steps := ol$Detection_Steps[match(SAMPLE_ID, ol$SampleID)]]
 dmo <- merge(dmo, onehot, by = "SAMPLE_ID", all.x = TRUE, sort = FALSE)
 dmo <- merge(dmo, ev,     by = "SAMPLE_ID", all.x = TRUE, sort = FALSE)
+dmo <- fill_pqtl(dmo)
 dmo[, in_qc_passed_matrix := as.integer(SAMPLE_ID %in% passed)]
+# (M9) The recovered provider field has impossible values: 13 negative and 16 over
+# a week. Flag them rather than silently shipping them as usable.
+hh <- suppressWarnings(as.numeric(dmo$HOURS_FROM_COLLECTION_TO_FREEZING))
+dmo[, hours_to_freezing_implausible := as.integer(!is.na(hh) & (hh < 0 | hh > 168))]
+say("   flagged implausible hours-to-freezing: %d (negative %d, >168h %d)",
+    sum(dmo$hours_to_freezing_implausible), sum(hh < 0, na.rm = TRUE), sum(hh > 168, na.rm = TRUE))
 say("   %d -> %d columns", ncol(dm), ncol(dmo))
 stopifnot(nrow(dmo) == 6191,
           sum(dmo$in_qc_passed_matrix) == 5928,
@@ -282,10 +320,22 @@ say("   after:  %d columns ; Sample_set populated %d of %d",
 # --------------------------------------------------------------------------
 # 7. Write. Every artefact keeps its filename; .tsv and .parquet stay in step.
 # --------------------------------------------------------------------------
+# (C2) The TSV convention is an empty field for missing, matching Batch 02. But the
+# parquet twin must carry a TRUE NULL, not an empty string, or is.na() silently
+# fails on it. Values read in from the pristine TSVs arrive as "", so normalise
+# every character column before writing the parquet.
+to_null <- function(dt) {
+  out <- copy(dt)
+  for (cn in names(out)) if (is.character(out[[cn]])) {
+    v <- out[[cn]]; v[!is.na(v) & trimws(v) == ""] <- NA_character_
+    out[[cn]] <- v
+  }
+  out
+}
 wr <- function(dt, stem) {
   f_tsv <- R(sprintf("%s_%s.tsv", stem, SUF)); f_pq <- R(sprintf("%s_%s.parquet", stem, SUF))
   fwrite(dt, f_tsv, sep = "\t", na = "", quote = FALSE)
-  write_parquet(as.data.frame(dt), f_pq)
+  write_parquet(as.data.frame(to_null(dt)), f_pq)
   say("   wrote %s  (%d x %d)", basename(f_tsv), nrow(dt), ncol(dt))
   say("   wrote %s", basename(f_pq))
 }
@@ -313,6 +363,23 @@ b2g <- fread(file.path(B02, "02.QCed_Batch02_Release_Dec2025",
 missing_b02 <- setdiff(names(b2g), names(fread(R(sprintf("qc_annotated_metadata_all_6191_samples_%s.tsv", SUF)), nrows = 0)))
 say("   Batch 02 qc_annotated columns still absent from Batch 03: %s",
     if (length(missing_b02)) paste(missing_b02, collapse = ", ") else "NONE")
+# no empty-string-as-missing may survive in any parquet
+for (stem in c("comprehensive_outliers_list", "qc_annotated_metadata_all_6191_samples",
+               "FG3_batch03_delivery_metadata")) {
+  b <- as.data.table(read_parquet(R(sprintf("%s_%s.parquet", stem, SUF))))
+  ch <- names(b)[vapply(b, is.character, logical(1))]
+  bad <- sum(vapply(ch, function(cn) sum(!is.na(b[[cn]]) & trimws(b[[cn]]) == ""), integer(1)))
+  say("   %-42s parquet empty-string cells (want 0): %d", stem, bad)
+}
+# every row of every artefact must carry an identity
+for (f in c(sprintf("comprehensive_outliers_list_%s.tsv", SUF),
+            sprintf("qc_annotated_metadata_all_6191_samples_%s.tsv", SUF),
+            sprintf("FG3_batch03_delivery_metadata_%s.tsv", SUF), sch_name)) {
+  x <- fread(R(f), colClasses = "character")
+  say("   %-52s blank FINNGENID: %d", f, sum(!nz(x$FINNGENID)))
+}
+pqn <- fread(R(sprintf("FG3_batch03_delivery_metadata_%s.tsv", SUF)), select = "QC_pqtl_mean_abs_z")
+say("   QC_pqtl_mean_abs_z populated: %d of 6191", sum(nz(pqn[[1]])))
 # no two columns may differ only by case, in any artefact
 for (f in c(sprintf("comprehensive_outliers_list_%s.tsv", SUF),
             sprintf("qc_annotated_metadata_all_6191_samples_%s.tsv", SUF),
