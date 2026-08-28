@@ -2,7 +2,7 @@
 set -euo pipefail
 REL="/mnt/longGWAS_disk_100GB/long_gwas/11.fg3_Proteomics/08.genewiz_batch3/01.QCed_Batch03_Release_Aug2026"
 cd "$REL"
-V="v.03.3"
+V="v.03.4"
 OUT="MANIFEST_${V}.txt"
 {
   echo "FG3 Batch 03 Olink proteomics — release package manifest"

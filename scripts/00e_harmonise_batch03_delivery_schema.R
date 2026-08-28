@@ -26,6 +26,9 @@
 #      single Sample_set factor plus registry-derived elig_* flags, which are a
 #      different variable -> emit Batch-02-style one-hot indicators alongside
 #      Sample_set, using the Batch 02 vocabulary wherever the concept matches.
+#   G. Three gaps closed by dedicated steps are folded in here as columns:
+#      05c (per-sample pQTL provenance, D-28), 02b (processing-time filter, D-37)
+#      and the BIOBANK_PLASMA blank on the 860 NFBC1966 rows (D-49).
 #   F. The 7 samples with no provider Sample_set (D-47) are recoverable to a
 #      group by strong inference but must not be written into a provider field
 #      -> emit Sample_set_inferred (100% coverage) and
@@ -81,6 +84,18 @@ tcmb <- readRDS(O("outliers/02_technical_outliers_combined.rds"))
 pca  <- readRDS(O("outliers/01_pca_outliers_original.rds"))
 sxp  <- fread(O("outliers/04_sex_predictions.tsv"), colClasses = list(character = "SAMPLE_ID"))
 pqs  <- fread(O("outliers/05b_05b_pqtl_stats.tsv"), colClasses = list(character = "FINNGENID"))
+
+# 05c — per-sample pQTL provenance (D-28). 05b scored one tube per individual;
+# 05c scores all 6,137 after reproducing 05b's own numbers to 5e-15.
+psx <- if (file.exists(O("outliers/05c_pqtl_stats_per_sample.tsv")))
+  fread(O("outliers/05c_pqtl_stats_per_sample.tsv"),
+        colClasses = list(character = c("SampleID", "FINNGENID"))) else NULL
+# 02b — processing-time filter, re-run on the recovered dates (D-37). Reported as
+# an INFORMATIONAL flag only: 84% of its flags fall on one task force and track a
+# collection protocol, not proteomic quality. See D-50.
+prc2 <- if (file.exists(O("outliers/02b_processing_time_stats.tsv")))
+  fread(O("outliers/02b_processing_time_stats.tsv"),
+        colClasses = list(character = "SAMPLE_ID")) else NULL
 
 # The four QC_pqtl_* metric columns shipped 0-populated in all three metadata
 # artefacts although the release note documents them (audit finding H1). The
@@ -216,6 +231,33 @@ for (cn in setdiff(names(ev), "SAMPLE_ID")) {
         min(v, na.rm = TRUE), max(v, na.rm = TRUE))
 }
 
+# 05c + 02b columns. Neither changes QC_flag or any matrix: 05c is a NEW finding
+# awaiting a removal decision, and 02b is explicitly not fit to drive removals.
+add_new_qc <- function(dt, idcol = "SAMPLE_ID") {
+  id <- dt[[idcol]]
+  if (!is.null(psx)) {
+    m <- match(id, psx$SampleID)
+    dt[, QC_pqtl_per_sample                 := as.integer(psx$Outlier_MeanAbsZ[m])]
+    dt[, QC_pqtl_per_sample_mean_abs_z      := psx$MeanAbsZ[m]]
+    dt[, QC_pqtl_per_sample_evaluable       := as.integer(!is.na(m))]
+    dt[is.na(QC_pqtl_per_sample), QC_pqtl_per_sample := 0L]
+    # a repeat-sampled individual whose aliquots disagree on the flag: the
+    # aliquot-level mix-up signature the per-individual check could not see
+    disc <- psx[, .(n = .N, f = sum(Outlier_MeanAbsZ)), by = FINNGENID][n > 1 & f > 0 & f < n, FINNGENID]
+    dt[, QC_pqtl_within_individual_discordant :=
+         as.integer(psx$FINNGENID[m] %in% disc & !is.na(m))]
+    dt[is.na(QC_pqtl_within_individual_discordant), QC_pqtl_within_individual_discordant := 0L]
+  }
+  if (!is.null(prc2)) {
+    m <- match(id, prc2$SAMPLE_ID)
+    dt[, QC_processing_time_hours     := prc2$processing_hours[m]]
+    dt[, QC_processing_time_flag      := as.integer(prc2$processing_outlier[m])]
+    dt[, QC_processing_time_evaluable := as.integer(!is.na(m))]
+    dt[is.na(QC_processing_time_flag), QC_processing_time_flag := 0L]
+  }
+  dt
+}
+
 add_inferred <- function(dt, idcol = "SAMPLE_ID") {
   m <- match(dt[[idcol]], ss$SAMPLE_ID)
   dt[, Sample_set_inferred         := ss$Sample_set_inferred[m]]
@@ -255,6 +297,7 @@ for (cn in c("FINNGENID", "BIOBANK_PLASMA")) {
 }
 ol <- fill_pqtl(ol)
 ol <- add_inferred(ol, "SampleID")
+ol <- add_new_qc(ol, "SampleID")
 ol[, DISEASE_GROUP := ss$Sample_set[match(SampleID, ss$SAMPLE_ID)]]
 ol[, Sample_set := DISEASE_GROUP]
 ol[, Sample_set_source := ss$Sample_set_source[match(SampleID, ss$SAMPLE_ID)]]
@@ -300,6 +343,7 @@ qa[, Sample_set        := ss$Sample_set[match(SAMPLE_ID, ss$SAMPLE_ID)]]
 qa[, Sample_set_source := ss$Sample_set_source[match(SAMPLE_ID, ss$SAMPLE_ID)]]
 qa[, DISEASE_GROUP     := Sample_set]
 qa <- add_inferred(qa)
+qa <- add_new_qc(qa)
 for (k in names(tech)) qa[[paste0("QC_technical_", k)]] <- as.integer(qa$SAMPLE_ID %in% tech[[k]])
 qa <- merge(qa, onehot, by = "SAMPLE_ID", all.x = TRUE, sort = FALSE)
 qa <- merge(qa, ev,     by = "SAMPLE_ID", all.x = TRUE, sort = FALSE)
@@ -314,7 +358,19 @@ say("== extending the delivery metadata ==")
 dmo <- copy(dm)
 # Batch 02 column-name aliases the Batch 03 delivery table was missing
 dmo[, CONTAINER_NAME := CONTAINER]
-dmo[, BIOBANK_PLASMA := BIOBANK]
+# (D-49) BIOBANK_PLASMA was aliased from this table's own BIOBANK, which is itself
+# blank for all 860 NFBC1966 rows because they have no THL volumes row -- so the
+# delivery table carried 5,331/6,191 while qc_annotated and the schema file both
+# carried 6,191/6,191 with "ARCTIC BIOBANK". The authoritative source is
+# 00_sample_mapping_fg3_batch_03.rds, which has it for every mapped tube.
+bpmap <- as.data.table(readRDS(R("00_sample_mapping_fg3_batch_03.rds")))
+bpmap <- bpmap[nz(BIOBANK_PLASMA), .(SampleID = as.character(SampleID),
+                                     BP = as.character(BIOBANK_PLASMA))]
+dmo[, BIOBANK_PLASMA := bpmap$BP[match(SAMPLE_ID, bpmap$SampleID)]]
+dmo[!nz(BIOBANK_PLASMA) & nz(BIOBANK), BIOBANK_PLASMA := BIOBANK]
+say("   BIOBANK_PLASMA from 00_sample_mapping: %d of %d populated (NFBC1966: %d of %d)",
+    sum(nz(dmo$BIOBANK_PLASMA)), nrow(dmo),
+    sum(nz(dmo$BIOBANK_PLASMA) & dmo$stratum == "NFBC1966"), sum(dmo$stratum == "NFBC1966"))
 ts <- function(d, t) {
   d <- trimws(as.character(d)); t <- trimws(as.character(t))
   out <- ifelse(nz(d), ifelse(nz(t), paste(d, t), d), NA_character_)
@@ -330,6 +386,7 @@ dmo <- merge(dmo, onehot, by = "SAMPLE_ID", all.x = TRUE, sort = FALSE)
 dmo <- merge(dmo, ev,     by = "SAMPLE_ID", all.x = TRUE, sort = FALSE)
 dmo <- fill_pqtl(dmo)
 dmo <- add_inferred(dmo)
+dmo <- add_new_qc(dmo)
 dmo[, in_qc_passed_matrix := as.integer(SAMPLE_ID %in% passed)]
 # (M9) The recovered provider field has impossible values: 13 negative and 16 over
 # a week. Flag them rather than silently shipping them as usable.
@@ -440,6 +497,25 @@ for (f in c(sprintf("qc_annotated_metadata_all_6191_samples_%s.tsv", SUF),
   stopifnot(sum(nz(x$Sample_set_inferred)) == nrow(x))
 }
 xx <- fread(R(sprintf("FG3_batch03_delivery_metadata_%s.tsv", SUF)), colClasses = "character")
+xxs <- xx[, .(SAMPLE_ID, stratum)]
+say("   BIOBANK_PLASMA populated, all three tables:")
+for (f in c(sprintf("FG3_batch03_delivery_metadata_%s.tsv", SUF),
+            sprintf("qc_annotated_metadata_all_6191_samples_%s.tsv", SUF), sch_name)) {
+  y <- fread(R(f), colClasses = "character")
+  st <- if ("stratum" %in% names(y)) y$stratum else xxs$stratum[match(y[[1]], xxs$SAMPLE_ID)]
+  say("      %-52s %4d/%d  (NFBC1966 %3d/%3d)", f, sum(nz(y$BIOBANK_PLASMA)), nrow(y),
+      sum(nz(y$BIOBANK_PLASMA) & st == "NFBC1966", na.rm = TRUE), sum(st == "NFBC1966", na.rm = TRUE))
+  stopifnot(sum(nz(y$BIOBANK_PLASMA)) == nrow(y))
+}
+say("   QC_pqtl_per_sample flags ................. %d  (05b per-individual: %d)",
+    sum(xx$QC_pqtl_per_sample == "1"), sum(xx$QC_pqtl == "1"))
+say("   QC_pqtl_per_sample_evaluable ............. %d  (05b evaluated %d individuals)",
+    sum(xx$QC_pqtl_per_sample_evaluable == "1"), uniqueN(pqs$FINNGENID))
+say("   QC_pqtl_within_individual_discordant ..... %d tubes", sum(xx$QC_pqtl_within_individual_discordant == "1"))
+say("   QC_processing_time_evaluable ............. %d  (as run: 0)", sum(xx$QC_processing_time_evaluable == "1"))
+say("   QC_processing_time_flag (INFORMATIONAL) .. %d", sum(xx$QC_processing_time_flag == "1"))
+say("   QC_flag unchanged at ..................... %d", sum(xx$QC_flag == "1"))
+stopifnot(sum(xx$QC_flag == "1") == 263)
 say("   one-hot Atopic_dermatitis (tied to PROVIDER Sample_set) : %d", sum(xx$Atopic_dermatitis == "1"))
 say("   Sample_set_inferred == Atopic_dermatitis                 : %d",
     sum(xx$Sample_set_inferred == "Atopic_dermatitis"))
