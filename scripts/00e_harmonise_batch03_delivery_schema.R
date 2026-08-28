@@ -26,6 +26,11 @@
 #      single Sample_set factor plus registry-derived elig_* flags, which are a
 #      different variable -> emit Batch-02-style one-hot indicators alongside
 #      Sample_set, using the Batch 02 vocabulary wherever the concept matches.
+#   F. The 7 samples with no provider Sample_set (D-47) are recoverable to a
+#      group by strong inference but must not be written into a provider field
+#      -> emit Sample_set_inferred (100% coverage) and
+#      Sample_set_inference_basis (per-row provenance of the value) alongside an
+#      untouched Sample_set.
 #   E. Per-level EVALUABLE denominators are not recoverable from the delivered
 #      files, so flagged/delivered rates are misleading for filters that could
 #      not assess a given sample -> emit QC_*_evaluable columns.
@@ -123,6 +128,39 @@ ss <- dm[, .(SAMPLE_ID, Sample_set = fifelse(nz(Sample_set), Sample_set, NA_char
              Sample_set_source)]
 stopifnot(all(ss[nz(Sample_set), Sample_set] %in% names(SET2COL)))
 
+# --------------------------------------------------------------------------
+# 2a. Sample_set_inferred / Sample_set_inference_basis  (D-47)
+# --------------------------------------------------------------------------
+# Sample_set stays PROVIDER-RECORDED ONLY (6,184 of 6,191). The 7 without one
+# come from the 20-candidate substitution round of 2025-10-28
+# (gs://thl-incoming-data/FG3/Batch_3_additional_plasma_selection_n_20_for_THL_Register.tsv),
+# which reached the biobank picking list but never the 46-column record that is
+# the sole carrier of Sample_set. Their group is inferable, not recorded:
+#   - the selection notes say the Auria substitutions were drawn "from the
+#     Atopic Dermatitis group";
+#   - those 2 Auria replacements sit in the SAME 20-candidate pool and carry
+#     Sample_set = Atopic_dermatitis;
+#   - all 7 are elig_AtopicDerm = 1, against 27.6% batch-wide (P = 1.2e-04);
+#   - Sample_set == "Atopic_dermatitis" is itself 100% AtopicDerm-eligible.
+# Sample_set_inferred is the column to GROUP BY (100% coverage);
+# Sample_set_inference_basis says where each value came from, so an inferred
+# value can never be mistaken for a recorded one.
+INFERRED_GROUP <- "Atopic_dermatitis"
+INFERRED_BASIS <- "inferred_n20_substitution_round_2025-10-28_atopic_dermatitis_pool"
+RECORDED_BASIS <- "provider_record"
+
+ss[, Sample_set_inferred := fifelse(!is.na(Sample_set), Sample_set, INFERRED_GROUP)]
+ss[, Sample_set_inference_basis := fifelse(!is.na(Sample_set), RECORDED_BASIS, INFERRED_BASIS)]
+say("== Sample_set_inferred ==")
+say("   provider-recorded ......... %d", ss[Sample_set_inference_basis == RECORDED_BASIS, .N])
+say("   inferred (%s) .. %d", INFERRED_GROUP, ss[Sample_set_inference_basis == INFERRED_BASIS, .N])
+say("   coverage .................. %d of %d (%.2f%%)",
+    ss[nz(Sample_set_inferred), .N], nrow(ss), 100 * ss[nz(Sample_set_inferred), .N] / nrow(ss))
+stopifnot(ss[!nz(Sample_set_inferred), .N] == 0,
+          ss[Sample_set_inference_basis == INFERRED_BASIS, .N] == 7,
+          # an inferred row must never also carry a provider value
+          ss[Sample_set_inference_basis == INFERRED_BASIS & !is.na(Sample_set), .N] == 0)
+
 onehot <- data.table(SAMPLE_ID = ss$SAMPLE_ID)
 for (s in names(SET2COL)) onehot[[SET2COL[[s]]]] <- as.integer(ss$Sample_set == s & !is.na(ss$Sample_set))
 for (g in B02_ABSENT_ZERO) onehot[[g]] <- 0L
@@ -178,6 +216,13 @@ for (cn in setdiff(names(ev), "SAMPLE_ID")) {
         min(v, na.rm = TRUE), max(v, na.rm = TRUE))
 }
 
+add_inferred <- function(dt, idcol = "SAMPLE_ID") {
+  m <- match(dt[[idcol]], ss$SAMPLE_ID)
+  dt[, Sample_set_inferred         := ss$Sample_set_inferred[m]]
+  dt[, Sample_set_inference_basis  := ss$Sample_set_inference_basis[m]]
+  dt
+}
+
 fill_pqtl <- function(dt, fgid_col = "FINNGENID") {
   m <- match(dt[[fgid_col]], pq_map$FINNGENID)
   pick <- function(cands) { h <- intersect(cands, names(pq_map)); if (length(h)) pq_map[[h[1]]][m] else NA }
@@ -209,6 +254,7 @@ for (cn in c("FINNGENID", "BIOBANK_PLASMA")) {
   }
 }
 ol <- fill_pqtl(ol)
+ol <- add_inferred(ol, "SampleID")
 ol[, DISEASE_GROUP := ss$Sample_set[match(SampleID, ss$SAMPLE_ID)]]
 ol[, Sample_set := DISEASE_GROUP]
 ol[, Sample_set_source := ss$Sample_set_source[match(SampleID, ss$SAMPLE_ID)]]
@@ -253,6 +299,7 @@ qa <- fill_pqtl(qa)
 qa[, Sample_set        := ss$Sample_set[match(SAMPLE_ID, ss$SAMPLE_ID)]]
 qa[, Sample_set_source := ss$Sample_set_source[match(SAMPLE_ID, ss$SAMPLE_ID)]]
 qa[, DISEASE_GROUP     := Sample_set]
+qa <- add_inferred(qa)
 for (k in names(tech)) qa[[paste0("QC_technical_", k)]] <- as.integer(qa$SAMPLE_ID %in% tech[[k]])
 qa <- merge(qa, onehot, by = "SAMPLE_ID", all.x = TRUE, sort = FALSE)
 qa <- merge(qa, ev,     by = "SAMPLE_ID", all.x = TRUE, sort = FALSE)
@@ -282,6 +329,7 @@ dmo[, Detection_Steps := ol$Detection_Steps[match(SAMPLE_ID, ol$SampleID)]]
 dmo <- merge(dmo, onehot, by = "SAMPLE_ID", all.x = TRUE, sort = FALSE)
 dmo <- merge(dmo, ev,     by = "SAMPLE_ID", all.x = TRUE, sort = FALSE)
 dmo <- fill_pqtl(dmo)
+dmo <- add_inferred(dmo)
 dmo[, in_qc_passed_matrix := as.integer(SAMPLE_ID %in% passed)]
 # (M9) The recovered provider field has impossible values: 13 negative and 16 over
 # a week. Flag them rather than silently shipping them as usable.
@@ -313,6 +361,7 @@ if ("Disease_Group_source" %in% names(sch)) setnames(sch, "Disease_Group_source"
 sch[, Sample_set        := ss$Sample_set[match(SAMPLE_ID, ss$SAMPLE_ID)]]
 sch[, Sample_set_source := ss$Sample_set_source[match(SAMPLE_ID, ss$SAMPLE_ID)]]
 sch[, DISEASE_GROUP     := Sample_set]
+sch <- add_inferred(sch)
 sch <- merge(sch, onehot, by = "SAMPLE_ID", all.x = TRUE, sort = FALSE)
 say("   after:  %d columns ; Sample_set populated %d of %d",
     ncol(sch), sum(nz(sch$Sample_set)), nrow(sch))
@@ -380,6 +429,21 @@ for (f in c(sprintf("comprehensive_outliers_list_%s.tsv", SUF),
 }
 pqn <- fread(R(sprintf("FG3_batch03_delivery_metadata_%s.tsv", SUF)), select = "QC_pqtl_mean_abs_z")
 say("   QC_pqtl_mean_abs_z populated: %d of 6191", sum(nz(pqn[[1]])))
+# Sample_set_inferred must be complete everywhere, and must never overwrite a
+# provider value; the one-hot block must stay tied to the PROVIDER column.
+for (f in c(sprintf("qc_annotated_metadata_all_6191_samples_%s.tsv", SUF),
+            sprintf("FG3_batch03_delivery_metadata_%s.tsv", SUF), sch_name)) {
+  x <- fread(R(f), colClasses = "character")
+  say("   %-52s Sample_set %d | Sample_set_inferred %d | inferred rows %d",
+      f, sum(nz(x$Sample_set)), sum(nz(x$Sample_set_inferred)),
+      sum(x$Sample_set_inference_basis == INFERRED_BASIS))
+  stopifnot(sum(nz(x$Sample_set_inferred)) == nrow(x))
+}
+xx <- fread(R(sprintf("FG3_batch03_delivery_metadata_%s.tsv", SUF)), colClasses = "character")
+say("   one-hot Atopic_dermatitis (tied to PROVIDER Sample_set) : %d", sum(xx$Atopic_dermatitis == "1"))
+say("   Sample_set_inferred == Atopic_dermatitis                 : %d",
+    sum(xx$Sample_set_inferred == "Atopic_dermatitis"))
+stopifnot(sum(xx$Atopic_dermatitis == "1") + 7 == sum(xx$Sample_set_inferred == "Atopic_dermatitis"))
 # no two columns may differ only by case, in any artefact
 for (f in c(sprintf("comprehensive_outliers_list_%s.tsv", SUF),
             sprintf("qc_annotated_metadata_all_6191_samples_%s.tsv", SUF),

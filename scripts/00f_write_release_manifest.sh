@@ -2,7 +2,7 @@
 set -euo pipefail
 REL="/mnt/longGWAS_disk_100GB/long_gwas/11.fg3_Proteomics/08.genewiz_batch3/01.QCed_Batch03_Release_Aug2026"
 cd "$REL"
-V="v.03.2"
+V="v.03.3"
 OUT="MANIFEST_${V}.txt"
 {
   echo "FG3 Batch 03 Olink proteomics — release package manifest"
@@ -20,6 +20,13 @@ OUT="MANIFEST_${V}.txt"
     printf "%-72s %10d %34s\n" "$f" "$(stat -c%s "$f")" "$(md5sum "$f" | cut -d' ' -f1)"
   done
   echo
+  stale=$(ls -1 MANIFEST_* 2>/dev/null | grep -v "^${OUT}$" || true)
+  if [ -n "$stale" ]; then
+    echo "WARNING - superseded manifest(s) present. Only ${OUT} describes this package;"
+    echo "the following are from earlier versions and must be removed before handover:"
+    echo "$stale" | sed 's/^/  /'
+    echo
+  fi
   hid=$(ls -A | grep '^\.' || true)
   if [ -n "$hid" ]; then
     echo "WARNING - hidden entries present in the release directory. These are NOT part of the"
