@@ -9,7 +9,7 @@
 # Emits three NPX matrices, each in rds / parquet / tsv:
 #   npx_matrix_all_<N>_samples_fg3_batch_03            all delivered biological samples
 #   npx_matrix_<M>_qc_passed_fg3_batch_03              after the union of all seven QC methods
-#   npx_matrix_<K>_qc_passed_thl_stratum_fg3_batch_03  QC-passed restricted to the THL-metadata-complete
+#   npx_matrix_<K>_qc_passed_taskforce_stratum_fg3_batch_03  QC-passed restricted to the task-force-selected
 #                                                      stratum (the Batch 03 analogue of Batch 02's
 #                                                      cohort-filtered 2,230 matrix; Batch 03 has no
 #                                                      F64 or chromosomal-abnormality samples)
@@ -91,10 +91,10 @@ say("writing released matrices")
 write3(npx_all_k,  sprintf("npx_matrix_all_%d_samples_%s", nrow(npx_all_k), B))
 write3(npx_pass_k, sprintf("npx_matrix_%d_qc_passed_%s", nrow(npx_pass_k), B))
 
-thl_ids <- b0[metadata_completeness == "thl_complete"]$SAMPLE_ID
-thl_pass <- intersect(rownames(npx_pass_k), thl_ids)
-write3(npx_pass_k[thl_pass, , drop = FALSE],
-       sprintf("npx_matrix_%d_qc_passed_thl_stratum_%s", length(thl_pass), B))
+tf_ids  <- b0[metadata_completeness == "thl_complete"]$SAMPLE_ID   # task-force-selected stratum
+tf_pass <- intersect(rownames(npx_pass_k), tf_ids)
+write3(npx_pass_k[tf_pass, , drop = FALSE],
+       sprintf("npx_matrix_%d_qc_passed_taskforce_stratum_%s", length(tf_pass), B))
 
 # ---- above-LOD subsets ----------------------------------------------------------------------------
 say("computing above-LOD assay subsets")

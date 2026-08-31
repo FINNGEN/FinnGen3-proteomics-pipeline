@@ -15,10 +15,17 @@
 \usepackage{array}
 \usepackage{tabularx}
 \usepackage{tcolorbox}
-\usepackage{fancyvrb}
+\tcbuselibrary{breakable}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric,arrows.meta,positioning,calc,fit}
+\usepackage{pdflscape}
+\usepackage{fancyvrb}   % pandoc emits Highlighting/verbatim as Verbatim environments
 \usepackage{calc}          % pandoc longtable column widths use \real{}
 \usepackage{textcomp}
 \usepackage{newunicodechar}
+% Long file names set in typewriter face must be allowed to break, or they run into the margin
+\usepackage[htt]{hyphenat}
+\emergencystretch=2em
 
 % Glyphs used in the release notes that are absent from the T1 text fonts
 \newunicodechar{≤}{\ensuremath{\leq}}
@@ -27,6 +34,10 @@
 \newunicodechar{→}{\ensuremath{\rightarrow}}
 \newunicodechar{−}{\ensuremath{-}}
 \newunicodechar{≈}{\ensuremath{\approx}}
+\newunicodechar{±}{\ensuremath{\pm}}
+\newunicodechar{ρ}{\ensuremath{\rho}}
+\newunicodechar{χ}{\ensuremath{\chi}}
+\newunicodechar{²}{\ensuremath{^{2}}}
 \newunicodechar{↔}{\ensuremath{\leftrightarrow}}
 \newunicodechar{λ}{\ensuremath{\lambda}}
 \newunicodechar{σ}{\ensuremath{\sigma}}
@@ -42,29 +53,55 @@
 \newunicodechar{╠}{+}\newunicodechar{╣}{+}\newunicodechar{╦}{+}\newunicodechar{╩}{+}\newunicodechar{╬}{+}
 \newunicodechar{↓}{\ensuremath{\downarrow}}
 \newunicodechar{✓}{\checkmark}
+\newunicodechar{·}{\textperiodcentered}
 
-% Set margins
 \geometry{margin=1in}
 
-% Footer setup
-\pagestyle{fancy}
-\fancyhf{}
-\fancyfoot[L]{$if(footer-left)$$footer-left$$else$FG3 Proteomics Release Note$endif$}
-\fancyfoot[R]{\thepage}
-\renewcommand{\headrulewidth}{0pt}
-\renewcommand{\footrulewidth}{0.4pt}
-
-% Hyperref setup
+% ── Hyperref ─────────────────────────────────────────────────
 \hypersetup{
     colorlinks=true,
     linkcolor=blue,
+    citecolor=blue,
     filecolor=magenta,
-    urlcolor=cyan,
+    urlcolor=teal,
 }
 
-% Code highlighting
+% ── Convenience macros ───────────────────────────────────────
+\newcommand{\pipelinelink}{%
+  \href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline}%
+       {FinnGen~3 Olink pipeline}}
+\newcommand{\steplink}[1]{%
+  \href{https://github.com/FINNGEN/FinnGen3-proteomics-pipeline\#pipeline-steps}{#1}}
+% Internal cross-reference. Markdown writes \secref{sec:foo}; the heading carries {#sec:foo},
+% which pandoc turns into \label{sec:foo}. hyperref makes the resulting number clickable, which
+% is the convention used by the FG3 cross-batch harmonised release note.
+\newcommand{\secref}[1]{Section~\ref{#1}}
+
+% ── Header / Footer ─────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0.4pt}
+\fancyfoot[L]{\footnotesize
+  Reza Jabal, PhD
+  (\href{mailto:rjabal@broadinstitute.org}{rjabal@broadinstitute.org})
+  \textbullet\ Broad Institute of MIT and Harvard}
+\fancyfoot[R]{\footnotesize\thepage}
+
+\fancypagestyle{plain}{%
+  \fancyhf{}
+  \renewcommand{\headrulewidth}{0pt}
+  \renewcommand{\footrulewidth}{0.4pt}
+  \fancyfoot[L]{\footnotesize
+    Reza Jabal, PhD
+    (\href{mailto:rjabal@broadinstitute.org}{rjabal@broadinstitute.org})
+    \textbullet\ Broad Institute of MIT and Harvard}
+  \fancyfoot[R]{\footnotesize\thepage}
+}
+
+% ── Code style ───────────────────────────────────────────────
 \lstset{
-    basicstyle=\ttfamily\footnotesize,
+    basicstyle=\ttfamily\scriptsize,
     breaklines=true,
     captionpos=b,
     numbers=left,
@@ -73,30 +110,136 @@
     backgroundcolor=\color{gray!10}
 }
 
-% Verbatim blocks (used for the sample-flow funnel) shrink to fit the text block
+% Verbatim blocks (used for the sample-flow funnels) shrink to fit the text block
 \DefineVerbatimEnvironment{Highlighting}{Verbatim}{fontsize=\footnotesize,commandchars=\\\{\}}
 \DefineVerbatimEnvironment{verbatim}{Verbatim}{fontsize=\footnotesize}
 
+% ── House callout boxes ──────────────────────────────────────
+% Two shared box environments, matching the FG3 cross-batch harmonised release note.
+%
+%   flowbox  black-framed white box around an ASCII funnel or threshold block, set smaller.
+%   caveat   titled orange callout for a caveat the analyst must act on. Takes the title as
+%            its argument: \begin{caveat}{Analyst Recommendation} ... \end{caveat}
+%
+% In the markdown, open and close them in ```{=latex} raw blocks around ordinary markdown,
+% so the note stays the single source.
+% Takes optional tcolorbox keys, so a long funnel that should not split can be written
+% \begin{flowbox}[breakable=false] to move whole to the next page, as the reference note does.
+\newtcolorbox{flowbox}[1][]{%
+  colback=white, colframe=black, boxrule=1pt, breakable,
+  left=4pt, right=4pt, top=4pt, bottom=4pt,
+  before upper={\DefineVerbatimEnvironment{verbatim}{Verbatim}{fontsize=\scriptsize}},
+  #1}
+
+\newtcolorbox{caveat}[1]{%
+  colback=yellow!5, colframe=orange!60, boxrule=0.5pt, breakable,
+  title={#1}, fonttitle=\bfseries\small,
+  coltitle=black, colbacktitle=orange!18,
+  left=5pt, right=5pt, top=4pt, bottom=4pt}
+
+% ── Shared flow-diagram vocabulary ───────────────────────────
+% One node style set for every flowchart in the note, so the diagrams read as one family and
+% match the consort-style figures in the CKD and ATC reports.
+\tikzset{
+  fgbox/.style   = {rectangle, draw=black!70, semithick, rounded corners=2pt,
+                    align=center, fill=blue!4, inner sep=4pt, font=\footnotesize},
+  fgnote/.style  = {rectangle, draw=black!50, semithick, rounded corners=2pt,
+                    align=left, fill=red!4, inner sep=4pt, font=\scriptsize},
+  fgfinal/.style = {rectangle, draw=black, very thick, rounded corners=2pt,
+                    align=center, fill=green!8, inner sep=4pt,
+                    font=\footnotesize\bfseries},
+  fgstep/.style  = {rectangle, draw=black!60, semithick, rounded corners=2pt,
+                    align=center, fill=white, inner sep=4pt, font=\footnotesize},
+  fgsrc/.style   = {rectangle, draw=black!50, semithick, rounded corners=2pt,
+                    align=center, fill=gray!8, inner sep=4pt, font=\scriptsize},
+  fgtest/.style  = {rectangle, draw=black!60, semithick, rounded corners=2pt,
+                    align=center, fill=white, inner sep=4pt, font=\scriptsize},
+  fgarr/.style   = {-{Latex[length=2.2mm]}, semithick, draw=black!65},
+  fgside/.style  = {-{Latex[length=2.0mm]}, semithick, draw=black!55, dashed},
+  fgtag/.style   = {font=\scriptsize\itshape, text=black!55, inner sep=1pt},
+}
+
+% Figures: keep them where they are written, caption them below in a smaller face, and never let a
+% graphic run past the text block. pandoc emits a bare \includegraphics, so the default is set here.
+\setkeys{Gin}{width=\linewidth,keepaspectratio}
+\usepackage{caption}
+\captionsetup[figure]{font=small,labelfont=bf,skip=6pt,justification=raggedright,singlelinecheck=false}
+\floatplacement{figure}{H}
+
+% Sections and subsections are numbered by LaTeX, as in the FG3 cross-batch harmonised release note.
+% Headings in the markdown therefore carry no manual numbers; prose cross-refers with \secref{}.
+\setcounter{secnumdepth}{2}
+
+% Widen the table-of-contents number field, or a two-digit subsection number such as 12.10 runs
+% straight into its title.
+\makeatletter
+\renewcommand*\l@subsection{\@dottedtocline{2}{1.5em}{2.9em}}
+\makeatother
+
+\sloppy
+
 % pandoc scaffolding
 \providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
-\providecommand{\pandocbounded}[1]{#1}
+% Real pandoc definition: shrink an over-wide or over-tall graphic to fit the text block.
+\makeatletter
+\newsavebox\pandoc@box
+\newcommand*\pandocbounded[1]{%
+  \sbox\pandoc@box{#1}%
+  \Gscale@div\@tempa{\textheight}{\dimexpr\ht\pandoc@box+\dp\pandoc@box\relax}%
+  \Gscale@div\@tempb{\linewidth}{\wd\pandoc@box}%
+  \ifdim\@tempb\p@<\@tempa\p@\let\@tempa\@tempb\fi
+  \ifdim\@tempa\p@<\p@\scalebox{\@tempa}{\usebox\pandoc@box}%
+  \else\usebox\pandoc@box\fi
+}
+\makeatother
 $if(highlighting-macros)$
 $highlighting-macros$
 $endif$
 
-\title{$title$}
-\date{}
-
 \begin{document}
 
-\maketitle
-\thispagestyle{empty}
+% ══════════════════════════════════════════════════════════════
+%  COVER PAGE
+% ══════════════════════════════════════════════════════════════
+\thispagestyle{plain}
 
-\vspace{4cm}
+\begin{center}
 
-$if(cover)$
-$cover$
+\vspace*{1.8cm}
+
+{\LARGE\bfseries $covertitle$}
+
+$if(coversubtitle)$
+\vspace{0.55cm}
+
+{\Large $coversubtitle$}
 $endif$
+
+$if(coverversion)$
+\vspace{0.4cm}
+
+{\normalsize $coverversion$}
+$endif$
+
+\vspace{1.7cm}
+
+$if(coverrows)$
+\begin{tabular}{@{} r @{\quad} l @{}}
+$coverrows$
+\end{tabular}
+$endif$
+
+$if(coverscope)$
+\vspace{1.4cm}
+
+\begin{tcolorbox}[colback=gray!5,colframe=gray!60,boxrule=0.5pt,
+                  width=0.93\textwidth,
+                  before upper={\setlength{\parskip}{0.6em}\setlength{\parindent}{0pt}}]
+$coverscope$
+\end{tcolorbox}
+$endif$
+
+\end{center}
 
 \newpage
 \tableofcontents

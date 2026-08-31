@@ -2,7 +2,7 @@
 set -euo pipefail
 REL="/mnt/longGWAS_disk_100GB/long_gwas/11.fg3_Proteomics/08.genewiz_batch3/01.QCed_Batch03_Release_Aug2026"
 cd "$REL"
-V="v.03.4"
+V="v.04"
 OUT="MANIFEST_${V}.txt"
 {
   echo "FG3 Batch 03 Olink proteomics — release package manifest"
@@ -15,8 +15,8 @@ OUT="MANIFEST_${V}.txt"
   echo
   printf "%-72s %10s %34s\n" "FILE" "BYTES" "MD5"
   printf "%-72s %10s %34s\n" "$(printf '%.0s-' {1..72})" "----------" "$(printf '%.0s-' {1..34})"
-  for f in $(ls -A | grep -v '^MANIFEST' | sort); do
-    [ -f "$f" ] || continue
+  # find rather than ls, so that the release-note figures in figures/ are covered too
+  for f in $(find . -type f -not -name 'MANIFEST_*' -printf '%P\n' | sort); do
     printf "%-72s %10d %34s\n" "$f" "$(stat -c%s "$f")" "$(md5sum "$f" | cut -d' ' -f1)"
   done
   echo
@@ -27,7 +27,7 @@ OUT="MANIFEST_${V}.txt"
     echo "$stale" | sed 's/^/  /'
     echo
   fi
-  hid=$(ls -A | grep '^\.' || true)
+  hid=$(find . -name '.*' -not -name '.' -printf '%P\n' || true)
   if [ -n "$hid" ]; then
     echo "WARNING - hidden entries present in the release directory. These are NOT part of the"
     echo "delivery and must be removed before handover:"

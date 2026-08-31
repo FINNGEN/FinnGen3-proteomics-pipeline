@@ -78,7 +78,7 @@ unres <- M[is.na(FINNGENID)]$SAMPLE_ID
 if (length(unres)) say("UNRESOLVED (expected 0): ", paste(unres, collapse = ", "))
 
 # ---- stratum -------------------------------------------------------------------------------------
-M[, stratum := fifelse(grepl("^P1516_", SAMPLE_ID), "NFBC1966", "THL_routed")]
+M[, stratum := fifelse(grepl("^P1516_", SAMPLE_ID), "NFBC1966", "TaskForce_selected")]
 
 # ---- R14 cohort and covariates -------------------------------------------------------------------
 r14 <- as.data.table(read_parquet(opt$r14_minimum,
@@ -131,7 +131,7 @@ M[is.na(BIOBANK_PLASMA) & grepl("^ARCTIC BIOBANK", COHORT_FINNGENID), BIOBANK_PL
 M[is.na(BIOBANK_PLASMA), BIOBANK_PLASMA := "UNKNOWN"]
 say("BIOBANK_PLASMA populated: ", sum(M$BIOBANK_PLASMA != "UNKNOWN"), " / ", nrow(M))
 
-# ---- separate-project tag (Arctic Biobank, THL-routed) -------------------------------------------
+# ---- separate-project tag (Arctic Biobank, task-force selected) ----------------------------------
 M[, separate_project := fifelse(!is.na(BIOBANK) & BIOBANK == "Arctic Biobank", "ArcticBiobank", NA_character_)]
 
 # ---- designated bridges --------------------------------------------------------------------------
@@ -201,7 +201,7 @@ rep_lines <- c(
   paste0("THL pre-analytical metadata absent  : ", M[metadata_completeness == "thl_absent", .N]),
   paste0("QC_technical_evaluable              : ", sum(M$QC_technical_evaluable)),
   paste0("stratum NFBC1966                    : ", M[stratum == "NFBC1966", .N]),
-  paste0("stratum THL_routed                  : ", M[stratum == "THL_routed", .N]),
+  paste0("stratum TaskForce_selected          : ", M[stratum == "TaskForce_selected", .N]),
   paste0("designated bridge rows              : ", M[is_designated_bridge == TRUE, .N]),
   paste0("separate_project = ArcticBiobank    : ", M[!is.na(separate_project), .N]),
   paste0("technical replicates                : ", M[is_technical_replicate == TRUE, .N]),

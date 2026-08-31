@@ -62,7 +62,7 @@ say("delivered biological samples: ", nrow(M))
 # ---- 2. FINNGENID, resolving the -rep suffix ------------------------------------------------------
 xw <- fread(opt$crosswalk, colClasses = CH)
 M <- merge(M, unique(xw[, .(base_sample_id = SAMPLE_ID, FINNGENID)]), by = "base_sample_id", all.x = TRUE)
-M[, stratum := fifelse(grepl("^P1516_", SAMPLE_ID), "NFBC1966", "THL_routed")]
+M[, stratum := fifelse(grepl("^P1516_", SAMPLE_ID), "NFBC1966", "TaskForce_selected")]
 say("FINNGENID resolved: ", sum(!is.na(M$FINNGENID)), " / ", nrow(M))
 
 # ---- 3. THL pre-analytical (collection date is the join key to the selection table) ---------------
