@@ -2,24 +2,44 @@
 set -euo pipefail
 REL="/mnt/longGWAS_disk_100GB/long_gwas/11.fg3_Proteomics/08.genewiz_batch3/01.QCed_Batch03_Release_Aug2026"
 cd "$REL"
-V="v.04"
+V="v.07"
 OUT="MANIFEST_${V}.txt"
+PKG="FG3_Batch_3_QCed_release/${V}"
+# Files present in the release directory that are BUILD INPUTS, not delivered artefacts, and are
+# therefore excluded from the distribution to the release bucket. The manifest must describe the
+# distributed package only: listing a build input makes every checksum verification against the
+# bucket report a miss for a file that was never meant to be there.
+NOT_DISTRIBUTED='^figures/|\.tex$'
 {
   echo "FG3 Batch 03 Olink proteomics — release package manifest"
   echo "Version:   $V"
   echo "Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  echo "Path:      $REL"
+  echo "Package:   $PKG"
   echo
-  echo "Every file that constitutes the delivery. Anything present in this directory and absent"
-  echo "from this list is not part of the release."
+  echo "Every file distributed as part of this release, with its size, its md5 checksum and, for"
+  echo "the tabular artefacts, its row and column counts. Anything absent from this list is not"
+  echo "part of the release. The list is complete against the release bucket: the manifest itself"
+  echo "is the only object in the package that it does not describe."
   echo
   printf "%-72s %10s %34s\n" "FILE" "BYTES" "MD5"
   printf "%-72s %10s %34s\n" "$(printf '%.0s-' {1..72})" "----------" "$(printf '%.0s-' {1..34})"
-  # find rather than ls, so that the release-note figures in figures/ are covered too
-  for f in $(find . -type f -not -name 'MANIFEST_*' -printf '%P\n' | sort); do
+  n_files=0
+  while IFS= read -r f; do
     printf "%-72s %10d %34s\n" "$f" "$(stat -c%s "$f")" "$(md5sum "$f" | cut -d' ' -f1)"
-  done
+    n_files=$((n_files + 1))
+  done < <(find . -type f -not -name 'MANIFEST_*' -printf '%P\n' | grep -Ev "$NOT_DISTRIBUTED" | sort)
   echo
+  echo "Distributed files: ${n_files}, plus this manifest."
+  echo
+  # Record the exclusions explicitly, so that a recipient who sees them referenced elsewhere knows
+  # they were withheld by design rather than lost in transit.
+  excl=$(find . -type f -not -name 'MANIFEST_*' -printf '%P\n' | grep -E "$NOT_DISTRIBUTED" | sort || true)
+  if [ -n "$excl" ]; then
+    echo "Present in the build directory and deliberately NOT distributed (source and build inputs"
+    echo "for the release note; the note itself ships as .md and .pdf):"
+    echo "$excl" | sed 's/^/  /'
+    echo
+  fi
   stale=$(ls -1 MANIFEST_* 2>/dev/null | grep -v "^${OUT}$" || true)
   if [ -n "$stale" ]; then
     echo "WARNING - superseded manifest(s) present. Only ${OUT} describes this package;"

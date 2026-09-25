@@ -58,7 +58,7 @@ lab <- function(x, y, t, size = 2.6, col = GREY, hjust = 0.5, face = "plain") {
 ## data --------------------------------------------------------------------------------------
 d  <- fread(file.path(REL, "FG3_batch03_delivery_metadata_fg3_batch_03.tsv"),
             colClasses = list(character = c("SAMPLE_ID", "FINNGENID")))
-qc <- rownames(readRDS(file.path(REL, "npx_matrix_5928_qc_passed_fg3_batch_03.rds")))
+qc <- rownames(readRDS(file.path(REL, "npx_matrix_5916_qc_passed_fg3_batch_03.rds")))
 d[, passed := SAMPLE_ID %in% qc]
 d[, cd := as.IDate(collection_date)]
 d[cd > as.IDate("2026-12-31"), cd := NA]
@@ -169,7 +169,8 @@ sv(ggplot(pat, aes(N, p)) +
      geom_text(aes(label = N), hjust = -0.25, size = 3.2) +
      scale_x_continuous(expand = expansion(mult = c(0, .14))) +
      labs(x = "Samples", y = NULL,
-          caption = "263 unique samples; 52 flagged by more than one method at this granularity") +
+          caption = sprintf("%s unique samples; %s flagged by more than one method at this granularity",
+                            comma(sum(pat$N)), comma(o[N_Methods > 1, .N]))) +
      th + theme(plot.caption = element_text(colour = GREY, size = 9, hjust = 0)),
    "fig09_outlier_overlap.png", 7.6, 3.8)
 
@@ -213,9 +214,10 @@ sv(ggplot(ag, aes(BL_AGE, fill = Stratum)) +
                     linewidth = .18) +
      scale_fill_manual(values = c(`Task-force selected` = NAVY, `NFBC1966 (Arctic Biobank)` = TEAL)) +
      scale_y_continuous(expand = expansion(mult = c(0, .06))) +
-     labs(x = "Age at sample collection (years)", y = "Samples",
-          caption = "The two strata occupy separate plates, so plate correction cannot be separated from a 30-year age difference") +
+     labs(x = "FinnGen baseline age, BL_AGE (years)", y = "Samples",
+          caption = paste0("BL_AGE is FinnGen baseline, not age at draw: NFBC1966 was sampled at its 46-year follow-up.\n",
+                            "The strata occupy separate plates, so plate correction cannot be separated from age")) +
      th + theme(plot.caption = element_text(colour = GREY, size = 9, hjust = 0)),
-   "fig12_age_by_stratum.png", 7.8, 3.6)
+   "fig12_age_by_stratum.png", 7.8, 3.9)
 
 cat("done\n")

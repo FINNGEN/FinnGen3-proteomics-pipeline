@@ -57,6 +57,14 @@ if [ -n "$UNDECLARED" ]; then
   exit 1
 fi
 
+# Guard: a release note is read outside the FinnGen Sandbox, so no participant or tube identifier
+# belongs in it. Deny-by-default; a token that must stay goes in docs/identifier_allowlist.txt with
+# a recorded reason. This is a hard gate -- it runs before any LaTeX is produced.
+python3 "$(dirname "${BASH_SOURCE[0]}")/check_no_identifiers.py" "$MD" || {
+  echo "ERROR: identifier guard failed for $MD -- refusing to build." >&2
+  exit 1
+}
+
 COVER_MD="$WORK/cover.md"; BODY_MD="$WORK/body.md"; SCOPE_MD="$WORK/scope.md"
 : > "$COVER_MD"; : > "$BODY_MD"; : > "$SCOPE_MD"
 
